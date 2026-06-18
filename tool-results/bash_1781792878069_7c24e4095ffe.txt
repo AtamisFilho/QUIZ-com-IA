@@ -1,0 +1,1714 @@
+=== src/components/quiz/QuizPlayScreen.tsx ===
+'use client'
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from '@/lib/i18n'
+import { useGameStore } from '@/lib/game-store'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Clock, CheckCircle2, XCircle, Flame, Zap } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
+import { Badge } from '@/components/ui/badge'
+
+const OPTION_COLORS = [
+  { bg: 'bg-emerald-500', hover: 'hover:bg-emerald-600', text: 'text-white', border: 'border-emerald-500', lightBg: 'bg-emerald-50 dark:bg-emerald-950/30', lightText: 'text-emerald-700 dark:text-emerald-400' },
+  { bg: 'bg-amber-500', hover: 'hover:bg-amber-600', text: 'text-white', border: 'border-amber-500', lightBg: 'bg-amber-50 dark:bg-amber-950/30', lightText: 'text-amber-700 dark:text-amber-400' },
+  { bg: 'bg-rose-500', hover: 'hover:bg-rose-600', text: 'text-white', border: 'border-rose-500', lightBg: 'bg-rose-50 dark:bg-rose-950/30', lightText: 'text-rose-700 dark:text-rose-400' },
+  { bg: 'bg-violet-500', hover: 'hover:bg-violet-600', text: 'text-white', border: 'border-violet-500', lightBg: 'bg-violet-50 dark:bg-violet-950/30', lightText: 'text-violet-700 dark:text-violet-400' },
+]
+
+const OPTION_LETTERS = ['A', 'B', 'C', 'D']
+
+export default function QuizPlayScreen() {
+  const { t } = useTranslation()
+  const {
+    currentQuestion,
+    currentQuestionIndex,
+    totalQuestions,
+    timeRemaining,
+    selectedOption,
+    hasSubmittedAnswer,
+    answerResult,
+    showResult,
+    players,
+    playerId,
+    setHasSubmittedAnswer,
+    setSelectedOption,
+  } = useGameStore()
+
+  const [questionStartTime, setQuestionStartTime] = useState<number>(Date.now())
+  const optionRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const [nextCountdown, setNextCountdown] = useState<number | null>(null)
+
+  // Track question start time
+  useEffect(() => {
+    if (currentQuestion && !showResult) {
+      setQuestionStartTime(Date.now())
+    }
+  }, [currentQuestion, showResult])
+
+  // Next question countdown when answer is revealed
+  useEffect(() => {
+    if (showResult) {
+      setNextCountdown(3)
+      const interval = setInterval(() => {
+        setNextCountdown((prev) => {
+          if (prev === null || prev <= 1) {
+            clearInterval(interval)
+            return null
+          }
+          return prev - 1
+        })
+      }, 1000)
+      return () => clearInterval(interval)
+    }
+  }, [showResult])
+
+  // Keyboard shortcuts for options (1-4, A-D)
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (hasSubmittedAnswer || showResult) return
+
+    let optionIndex: number | null = null
+    if (e.key >= '1' && e.key <= '4') {
+      optionIndex = parseInt(e.key) - 1
+    } else if (e.key.toLowerCase() >= 'a' && e.key.toLowerCase() <= 'd') {
+      optionIndex = e.key.toLowerCase().charCodeAt(0) - 97
+    }
+
+    if (optionIndex !== null && optionIndex >= 0 && optionIndex < 4) {
+      setSelectedOption(optionIndex)
+    }
+
+    // Enter to submit
+    if (e.key === 'Enter' && selectedOption !== null && !hasSubmittedAnswer) {
+      handleSubmitAnswer()
+    }
+  }, asSubmittedAnswer, showResult, selectedOption])
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, andleKeyDown])
+
+  // Focus management when question changes
+  useEffect(() => {
+    if (currentQuestion && !showResult) {
+      optionRefs.current[0]?.focus()
+    }
+  }, [currentQuestion, showResult])
+
+  const handleSubmitAnswer = useCallback(() => {
+    if (selectedOption === null || hasSubmittedAnswer || !currentQuestion) return
+
+    setHasSubmittedAnswer(true)
+    const responseTime = Date.now() - questionStartTime
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('quiz-submit-answer', {
+          detail: {
+            selectedIndex: selectedOption,
+            responseTime,
+          },
+        })
+      )
+    }
+  }, [selectedOption, hasSubmittedAnswer, currentQuestion, questionStartTime, setHasSubmittedAnswer])
+
+  if (!currentQuestion) {
+    return (
+      <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="w-12 h-12 border-4 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-muted-foreground">{t('common.loading')}</p>
+        </div>
+      </div>
+    )
+  }
+
+  const timePerQuestion = useGameStore.getState().gameSettings?.timePerQuestion || 20
+  const timerPercent = (timeRemaining / timePerQuestion) * 100
+  const isTimeLow = timeRemaining <= 5
+
+  // Find current player's score for mini-leaderboard
+  const sortedPlayers = [...players].sort((a, b) => b.score - a.score)
+  const currentPlayer = players.find((p) => p.id === playerId)
+
+  return (
+    <div className="min-h-[calc(100vh-3.5rem)] flex flex-col px-4 py-4 sm:py-6 max-w-4xl mx-auto">
+      {/* Top bar: Question counter + Timer + Mini-leaderboard */}
+      <div className="flex items-center justify-between mb-4 gap-3">
+        <Badge variant="outline" className="text-sm px-3 py-1">
+          {t('quiz.question', { current: String(currentQuestionIndex + 1), total: String(totalQuestions) })}
+        </Badge>
+
+        {/* Timer */}
+        <div className="flex items-center gap-2">
+          <Clock className={`w-4 h-4 ${isTimeLow ? 'text-red-500 animate-pulse' : 'text-muted-foreground'}`} />
+          <div className="w-24 sm:w-32">
+            <Progress
+              value={timerPercent}
+              className={`h-2 ${isTimeLow ? '[&>div]:bg-red-500' : '[&>div]:bg-purple-500'}`}
+            />
+          </div>
+          <span className={`text-sm font-mono font-bold min-w-[2ch] ${
+            isTimeLow ? 'text-red-500 animate-pulse' : 'text-muted-foreground'
+          }`}>
+            {timeRemaining}
+          </span>
+        </div>
+
+        {/* Current score */}
+        {currentPlayer && (
+          <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border-0">
+            <Zap className="w-3 h-3 mr-1" />
+            {currentPlayer.score}
+          </Badge>
+        )}
+      </div>
+
+      {/* Category badge */}
+      {currentQuestion.category && (
+        <div className="flex justify-center mb-3">
+          <Badge variant="secondary" className="text-xs capitalize">
+            {currentQuestion.category}
+          </Badge>
+        </div>
+      )}
+
+      {/* Question Text */}
+      <motion.div
+        key={`question-${currentQuestionIndex}`}
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="flex-1 flex flex-col"
+      >
+        <div className="text-center mb-6 sm:mb-8">
+          <h2 className="text-xl sm:text-2xl md:text-3xl font-bold leading-tight px-2">
+            {currentQuestion.text}
+          </h2>
+        </div>
+
+        {/* Options */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6">
+          <AnimatePresence mode="wait">
+            {currentQuestion.options.map((option, index) => {
+              const color = OPTION_COLORS[index]
+              const isSelected = selectedOption === index
+              const isCorrectOption = showResult && answerResult && index === answerResult.correctIndex
+              const isWrongSelection = showResult && answerResult && isSelected && !answerResult.isCorrect
+
+              let buttonClass = ''
+              if (showResult) {
+                if (isCorrectOption) {
+                  buttonClass = `${color.bg} ${color.text} ring-2 ring-emerald-400 shadow-lg`
+                } else if (isWrongSelection) {
+                  buttonClass = 'bg-red-500 text-white ring-2 ring-red-400 shadow-lg opacity-80'
+                } else {
+                  buttonClass = 'bg-muted text-muted-foreground opacity-50'
+                }
+              } else if (isSelected) {
+                buttonClass = `${color.bg} ${color.text} ring-2 ring-offset-2 ring-purple-500 shadow-md`
+              } else {
+                buttonClass = `${color.lightBg} ${color.lightText} border-2 border-transparent hover:border-purple-300 dark:hover:border-purple-700`
+              }
+
+              return (
+                <motion.button
+                  key={index}
+                  ref={(el) => { optionRefs.current[index] = el }}
+                  initial={{ opacity: 0, x: index % 2 === 0 ? -20 : 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.3, delay: index * 0.08 }}
+                  onClick={() => !hasSubmittedAnswer && !showResult && setSelectedOption(index)}
+                  disabled={hasSubmittedAnswer || showResult}
+                  className={`relative flex items-center gap-3 p-4 sm:p-5 rounded-xl text-left font-medium transition-all duration-200 min-h-[56px] ${buttonClass}`}
+                  aria-label={`Option ${OPTION_LETTERS[index]}: ${option}`}
+                  aria-pressed={isSelected}
+                >
+                  <span className={`flex items-center justify-center w-8 h-8 rounded-lg text-sm font-bold shrink-0 ${
+                    showResult && isCorrectOption
+                      ? 'bg-white/20'
+                      : isSelected && !showResult
+                        ? 'bg-white/20'
+                        : 'bg-black/10 dark:bg-white/10'
+                  }`}>
+                    {OPTION_LETTERS[index]}
+                  </span>
+                  <span className="text-sm sm:text-base">{option}</span>
+                  {showResult && isCorrectOption && (
+                    <CheckCircle2 className="w-5 h-5 ml-auto shrink-0" />
+                  )}
+                  {isWrongSelection && (
+                    <XCircle className="w-5 h-5 ml-auto shrink-0" />
+                  )}
+                </motion.button>
+              )
+            })}
+          </AnimatePresence>
+        </div>
+
+        {/* Submit Button */}
+        {!showResult && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex justify-center"
+          >
+            <Button
+              onClick={handleSubmitAnswer}
+              disabled={selectedOption === null || hasSubmittedAnswer}
+              size="lg"
+              className="px-10 h-12 text-lg bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 shadow-lg shadow-purple-500/25 disabled:opacity-50"
+              aria-label={t('quiz.submitAnswer')}
+            >
+              {hasSubmittedAnswer ? t('quiz.waitingForOthers') : t('quiz.submitAnswer')}
+            </Button>
+          </motion.div>
+        )}
+
+        {/* Answer Result */}
+        <AnimatePresence>
+          {showResult && answerResult && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+              className="text-center space-y-3"
+            >
+              {answerResult.isCorrect ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                    <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
+                      {t('quiz.correct', { points: String(answerResult.pointsEarned) })}
+                    </span>
+                  </div>
+                  {currentPlayer && currentPlayer.streak >= 2 && (
+                    <div className="flex items-center justify-center gap-1 text-amber-600 dark:text-amber-400">
+                      <Flame className="w-5 h-5" />
+                      <span className="font-semibold">
+                        {t('quiz.streak', { count: String(currentPlayer.streak) })}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center gap-2">
+                  <XCircle className="w-6 h-6 text-red-500" />
+                  <span className="text-lg font-semibold text-red-600 dark:text-red-400">
+                    {t('quiz.incorrect', { answer: OPTION_LETTERS[answerResult.correctIndex] })}
+                  </span>
+                </div>
+              )}
+
+              {nextCountdown !== null && (
+                <p className="text-sm text-muted-foreground">
+                  {t('quiz.nextQuestion', { seconds: String(nextCountdown) })}
+                </p>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+
+      {/* Mini Leaderboard */}
+      {players.length > 1 && (
+        <div className="mt-4 pt-4 border-t border-border/40">
+          <div className="flex flex-wrap gap-2 justify-center">
+            {sortedPlayers.slice(0, 5).map((player, idx) => (
+              <Badge
+                key={player.id}
+                variant={player.id === playerId ? 'default' : 'outline'}
+                className={`text-xs ${
+                  player.id === playerId
+                    ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border-0'
+                    : ''
+                }`}
+              >
+                {idx === 0 && '👑 '}
+                {player.avatar} {player.name}: {player.score}
+                {player.streak >= 2 && <Flame className="w-3 h-3 ml-1 text-amber-500" />}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+=== src/components/quiz/ResultsScreen.tsx ===
+'use client'
+
+import { useTranslation } from '@/lib/i18n'
+import { useGameStore } from '@/lib/game-store'
+import { motion } from 'framer-motion'
+import { Trophy, Medal, Home, RotateCcw, Flame, Crown } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+
+function PodiumPlace({
+  player,
+  place,
+  delay,
+}: {
+  player: { name: string; avatar: string; score: number; streak: number } | null
+  place: 1 | 2 | 3
+  delay: number
+}) {
+  const { t } = useTranslation()
+
+  const sizeClasses = {
+    1: 'w-20 h-20 text-3xl',
+    2: 'w-16 h-16 text-2xl',
+    3: 'w-14 h-14 text-xl',
+  }
+
+  const bgClasses = {
+    1: 'bg-gradient-to-br from-amber-400 to-amber-600 shadow-xl shadow-amber-500/30',
+    2: 'bg-gradient-to-br from-gray-300 to-gray-500 shadow-xl shadow-gray-400/30',
+    3: 'bg-gradient-to-br from-orange-400 to-orange-600 shadow-xl shadow-orange-500/30',
+  }
+
+  const podiumHeight = {
+    1: 'h-28',
+    2: 'h-20',
+    3: 'h-14',
+  }
+
+  const podiumBg = {
+    1: 'bg-amber-500',
+    2: 'bg-gray-400',
+    3: 'bg-orange-500',
+  }
+
+  if (!player) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 30 }}
+        animate={{ opacity: 0.3, y: 0 }}
+        transition={{ duration: 0.5, delay }}
+        className="flex flex-col items-center"
+      >
+        <div className={`${sizeClasses[place]} rounded-full ${bgClasses[place]} flex items-center justify-center mb-2 opacity-30`}>
+          ?
+        </div>
+        <div className={`${podiumHeight[place]} w-20 sm:w-24 ${podiumBg[place]} rounded-t-lg opacity-30 flex items-center justify-center`}>
+          <span className="text-white font-bold text-xl">{place}</span>
+        </div>
+      </motion.div>
+    )
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 30 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, delay }}
+      className="flex flex-col items-center"
+    >
+      {place === 1 && (
+        <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ duration: 0.5, delay: delay + 0.3, type: 'spring' }}
+        >
+          <Crown className="w-8 h-8 text-amber-500 mb-1" />
+        </motion.div>
+      )}
+      <motion.div
+        whileHover={{ scale: 1.05 }}
+        className={`${sizeClasses[place]} rounded-full ${bgClasses[place]} flex items-center justify-center mb-2 cursor-default`}
+      >
+        <span>{player.avatar}</span>
+      </motion.div>
+      <p className="font-semibold text-sm text-center max-w-[80px] truncate mb-1">{player.name}</p>
+      <p className="text-xs text-muted-foreground mb-2">{player.score} pts</p>
+      {player.streak >= 2 && (
+        <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0 text-xs mb-1">
+          <Flame className="w-3 h-3 mr-1" />
+          {t('quiz.streak', { count: String(player.streak) })}
+        </Badge>
+      )}
+      <div className={`${podiumHeight[place]} w-20 sm:w-24 ${podiumBg[place]} rounded-t-lg flex items-center justify-center`}>
+        <span className="text-white font-bold text-xl">{place}</span>
+      </div>
+    </motion.div>
+  )
+}
+
+export default function ResultsScreen() {
+  const { t } = useTranslation()
+  const { finalResults, playerId, setCurrentView, reset } = useGameStore()
+
+  const handlePlayAgain = () => {
+    reset()
+    setCurrentView('create')
+  }
+
+  const handleHome = () => {
+    reset()
+    setCurrentView('landing')
+  }
+
+  const topThree = finalResults.slice(0, 3)
+  const rest = finalResults.slice(3)
+  const currentPlayer = finalResults.find((p) => p.id === playerId)
+  const playerRank = finalResults.findIndex((p) => p.id === playerId) + 1
+
+  return (
+    <div className="min-h-[calc(100vh-3.5rem)] flex flex-col px-4 py-6 sm:py-10 max-w-3xl mx-auto">
+      {/* Title & Trophy */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.6, type: 'spring' }}
+        className="text-center mb-8"
+      >
+        <motion.div
+          animate={{ rotate: [0, -10, 10, -10, 0] }}
+          transition={{ duration: 0.6, delay: 0.5 }}
+        >
+          <Trophy className="w-16 h-16 text-amber-500 mx-auto mb-4" />
+        </motion.div>
+        <h1 className="text-3xl sm:text-4xl font-bold mb-2">{t('results.title')}</h1>
+        {finalResults.length > 0 && (
+          <p className="text-lg text-amber-600 dark:text-amber-400 font-semibold">
+            {t('results.winner', { name: finalResults[0].name })}
+          </p>
+        )}
+        {currentPlayer && (
+          <p className="text-muted-foreground mt-1">
+            {t('results.yourScore', { score: String(currentPlayer.score) })} #{playerRank}
+          </p>
+        )}
+      </motion.div>
+
+      {/* Podium */}
+      <div className="flex items-end justify-center gap-3 sm:gap-6 mb-10">
+        {/* 2nd place */}
+        <PodiumPlace player={topThree[1] || null} place={2} delay={0.3} />
+        {/* 1st place */}
+        <PodiumPlace player={topThree[0] || null} place={1} delay={0.1} />
+        {/* 3rd place */}
+        <PodiumPlace player={topThree[2] || null} place={3} delay={0.5} />
+      </div>
+
+      {/* Full Leaderboard */}
+      {rest.length > 0 && (
+        <Card className="border-border/50 shadow-lg mb-8">
+          <CardContent className="pt-4 pb-2">
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {rest.map((player, index) => (
+                <motion.div
+                  key={player.id}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.3, delay: 0.6 + index * 0.05 }}
+                  className={`flex items-center gap-3 p-3 rounded-lg ${
+                    player.id === playerId
+                      ? 'bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800'
+                      : 'bg-muted/50'
+                  }`}
+                >
+                  <span className="w-8 text-center font-bold text-muted-foreground">
+                    {index + 4}
+                  </span>
+                  <span className="text-lg">{player.avatar}</span>
+                  <span className="flex-1 font-medium truncate">{player.name}</span>
+                  {player.streak >= 2 && (
+                    <Flame className="w-4 h-4 text-amber-500" />
+                  )}
+                  <span className="font-semibold text-sm">{player.score} pts</span>
+                </motion.div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Action Buttons */}
+      <div className="mt-auto flex flex-col sm:flex-row gap-3 justify-center">
+        <Button
+          onClick={handlePlayAgain}
+          size="lg"
+          className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 shadow-lg shadow-purple-500/25"
+        >
+          <RotateCcw className="w-4 h-4 mr-2" />
+          {t('results.playAgain')}
+        </Button>
+        <Button
+          onClick={handleHome}
+          variant="outline"
+          size="lg"
+          className="border-2"
+        >
+          <Home className="w-4 h-4 mr-2" />
+          {t('results.backToHome')}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+
+=== src/components/quiz/LobbyScreen.tsx ===
+'use client'
+
+import { useTranslation } from '@/lib/i18n'
+import { useGameStore } from '@/lib/game-store'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Copy, Check, Crown, Play, Loader2, Wifi, WifiOff } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Separator } from '@/components/ui/separator'
+import { useState } from 'react'
+
+export default function LobbyScreen() {
+  const { t } = useTranslation()
+  const {
+    gameCode,
+    players,
+    isHost,
+    gameSettings,
+    isConnected,
+    setCurrentView,
+  } = useGameStore()
+
+  const [copied, setCopied] = useState(false)
+  const [starting, setStarting] = useState(false)
+
+  const handleCopyCode = async () => {
+    if (!gameCode) return
+    try {
+      await navigator.clipboard.writeText(gameCode)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Fallback
+      const textArea = document.createElement('textarea')
+      textArea.value = gameCode
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  const handleStartGame = () => {
+    setStarting(true)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('quiz-start-game'))
+    }
+  }
+
+  return (
+    <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-4 py-8">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="w-full max-w-2xl space-y-6"
+      >
+        {/* Room Code Card */}
+        <Card className="border-purple-200 dark:border-purple-800/50 shadow-xl overflow-hidden">
+          <div className="bg-gradient-to-r from-purple-600 to-purple-700 p-6 text-center">
+            <p className="text-purple-200 text-sm mb-2">{t('lobby.shareCode')}</p>
+            <div className="flex items-center justify-center gap-3">
+              <span className="text-4xl sm:text-5xl font-mono font-bold tracking-[0.3em] text-white">
+                {gameCode}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCopyCode}
+                className="text-white hover:bg-white/20 h-10 w-10 p-0"
+                aria-label="Copy room code"
+              >
+                {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+              </Button>
+            </div>
+            {copied && (
+              <motion.p
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="text-emerald-300 text-xs mt-1"
+              >
+                ✓ Copied!
+              </motion.p>
+            )}
+          </div>
+        </Card>
+
+        {/* Players List */}
+        <Card className="border-border/50 shadow-lg">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center justify-between">
+              <span>{t('lobby.players')} ({players.length})</span>
+              <Badge
+                variant={isConnected ? 'default' : 'destructive'}
+                className={`text-xs ${
+                  isConnected
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                    : ''
+                } border-0`}
+              >
+                {isConnected ? (
+                  <Wifi className="w-3 h-3 mr-1" />
+                ) : (
+                  <WifiOff className="w-3 h-3 mr-1" />
+                )}
+                {isConnected ? t('common.connected') : t('common.disconnected')}
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              <AnimatePresence>
+                {players.map((player, index) => (
+                  <motion.div
+                    key={player.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: 0.3, delay: index * 0.05 }}
+                    className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/80 transition-colors"
+                  >
+                    <Avatar className="h-10 w-10 border-2 border-background">
+                      <AvatarFallback className="bg-purple-100 dark:bg-purple-900/30 text-lg">
+                        {player.avatar}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium truncate">{player.name}</span>
+                        {player.isHost && (
+                          <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0 text-xs">
+                            <Crown className="w-3 h-3 mr-1" />
+                            {t('lobby.youAreHost')}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div
+                      className={`w-2.5 h-2.5 rounded-full ${
+                        player.isConnected ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
+                      aria-label={player.isConnected ? t('common.connected') : t('common.disconnected')}
+                    />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+              {players.length === 0 && (
+                <p className="text-center text-muted-foreground py-4">
+                  {t('common.loading')}
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Settings Summary */}
+        {gameSettings && (
+          <Card className="border-border/50">
+            <CardContent className="pt-4 pb-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                <div className="text-center">
+                  <p className="text-muted-foreground text-xs">{t('gameSetup.category')}</p>
+                  <p className="font-medium capitalize">
+                    {t(`category.${gameSettings.category}` as Parameters<typeof t>[0]) !== `category.${gameSettings.category}`
+                      ? t(`category.${gameSettings.category}` as Parameters<typeof t>[0])
+                      : gameSettings.category}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-muted-foreground text-xs">{t('gameSetup.difficulty')}</p>
+                  <p className="font-medium">{t(`difficulty.${gameSettings.difficulty}` as Parameters<typeof t>[0])}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-muted-foreground text-xs">{t('gameSetup.questionCount')}</p>
+                  <p className="font-medium">{gameSettings.questionCount}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-muted-foreground text-xs">{t('gameSetup.timePerQuestion')}</p>
+                  <p className="font-medium">{gameSettings.timePerQuestion}s</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Separator />
+
+        {/* Action Area */}
+        <div className="text-center space-y-4">
+          {isHost ? (
+            <Button
+              onClick={handleStartGame}
+              disabled={starting || players.length < 1}
+              size="lg"
+              className="px-12 h-14 text-lg bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 shadow-lg shadow-purple-500/25"
+              aria-label={t('lobby.startGame')}
+            >
+              {starting ? (
+                <>
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  {t('common.loading')}
+                </>
+              ) : (
+                <>
+                  <Play className="w-5 h-5 mr-2" />
+                  {t('lobby.startGame')}
+                </>
+              )}
+            </Button>
+          ) : (
+            <div className="flex flex-col items-center gap-2 py-4">
+              <Loader2 className="w-6 h-6 animate-spin text-purple-600" />
+              <p className="text-muted-foreground">{t('lobby.waitingForHost')}</p>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+
+=== src/components/quiz/CreateGameScreen.tsx ===
+'use client'
+
+import { useState } from 'react'
+import { useTranslation, type Locale } from '@/lib/i18n'
+import { useGameStore, type GameSettings } from '@/lib/game-store'
+import { CATEGORY_LABELS } from '@/lib/game-utils'
+import { motion } from 'framer-motion'
+import { Loader2, Brain } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Slider } from '@/components/ui/slider'
+
+const DIFFICULTY_OPTIONS: GameSettings['difficulty'][] = ['EASY', 'MEDIUM', 'HARD', 'MIXED']
+const QUESTION_COUNTS = [5, 10, 15, 20]
+const TIME_OPTIONS = [10, 15, 20, 30, 45, 60]
+const LANGUAGES: { value: string; label: string }[] = [
+  { value: 'pt-BR', label: 'Português (BR)' },
+  { value: 'en-US', label: 'English (US)' },
+  { value: 'es-ES', label: 'Español (ES)' },
+]
+
+export default function CreateGameScreen() {
+  const { t } = useTranslation()
+  const { setCurrentView, setPlayerInfo, setGameInfo, setGameSettings, setPlayers, setIsHost } = useGameStore()
+
+  const [playerName, setPlayerName] = useState('')
+  const [category, setCategory] = useState('general')
+  const [difficulty, setDifficulty] = useState<GameSettings['difficulty']>('MEDIUM')
+  const [language, setLanguage] = useState('pt-BR')
+  const axPlayers, setMaxPlayers] = useState([8])
+  const [questionCount, setQuestionCount] = useState('10')
+  const [timePerQuestion, setTimePerQuestion] = useState('20')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!playerName.trim()) return
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const settings: GameSettings = {
+        category,
+        difficulty,
+        language,
+        maxPlayers: maxPlayers[0],
+        questionCount: parseInt(questionCount),
+        timePerQuestion: parseInt(timePerQuestion),
+      }
+
+      // Call API to create game
+      const res = await fetch('/api/game/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hostName: playerName.trim(),
+          settings,
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to create game')
+      }
+
+      const data = await res.json()
+
+      // Set store data
+      setPlayerInfo({
+        id: data.playerId,
+        name: playerName.trim(),
+        avatar: data.avatar || '🎮',
+        isHost: true,
+      })
+      setGameInfo({ code: data.gameCode, id: data.gameId })
+      setGameSettings(settings)
+      setPlayers(data.players || [])
+      setIsHost(true)
+
+      // Emit socket event - the socket connection is handled in page.tsx
+      // We store the data so the socket handler can use it
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('quiz-create-room', {
+            detail: { settings, playerName: playerName.trim(), playerId: data.playerId },
+          })
+        )
+      }
+
+      setCurrentView('lobby')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create game')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-4 py-8">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="w-full max-w-lg"
+      >
+        <Card className="border-border/50 shadow-xl">
+          <CardHeader className="text-center pb-2">
+            <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-purple-700 mx-auto mb-3">
+              <Brain className="w-6 h-6 text-white" />
+            </div>
+            <CardTitle className="text-2xl">{t('gameSetup.title')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-5">
+              {/* Player Name */}
+              <div className="space-y-2">
+                <Label htmlFor="playerName">{t('join.enterName')}</Label>
+                <Input
+                  id="playerName"
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  placeholder={t('join.enterName')}
+                  maxLength={20}
+                  required
+                  className="h-11"
+                />
+              </div>
+
+              {/* Category */}
+              <div className="space-y-2">
+                <Label>{t('gameSetup.category')}</Label>
+                <Select value={category} onValueChange={setCategory}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(CATEGORY_LABELS).map(([key, label]) => (
+                      <SelectItem key={key} value={key}>
+                        {t(`category.${key}` as Parameters<typeof t>[0]) !== `category.${key}`
+                          ? t(`category.${key}` as Parameters<typeof t>[0])
+                          : label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Difficulty */}
+              <div className="space-y-2">
+                <Label>{t('gameSetup.difficulty')}</Label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {DIFFICULTY_OPTIONS.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setDifficulty(d)}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+                        difficulty === d
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-500/25'
+                          : 'bg-background border-border hover:border-purple-300 dark:hover:border-purple-700'
+                      }`}
+                      aria-pressed={difficulty === d}
+                      aria-label={t(`difficulty.${d}` as Parameters<typeof t>[0])}
+                    >
+                      {t(`difficulty.${d}` as Parameters<typeof t>[0])}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Question Language */}
+              <div className="space-y-2">
+                <Label>{t('gameSetup.language')}</Label>
+                <Select value={language} onValueChange={setLanguage}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGES.map((lang) => (
+                      <SelectItem key={lang.value} value={lang.value}>
+                        {lang.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Max Players */}
+              <div className="space-y-2">
+                <Label className="flex justify-between">
+                  <span>{t('gameSetup.maxPlayers')}</span>
+                  <span className="text-purple-600 dark:text-purple-400 font-semibold">{maxPlayers[0]}</span>
+                </Label>
+                <Slider
+                  value={maxPlayers}
+                  onValueChange={setMaxPlayers}
+                  min={2}
+                  max={20}
+                  step={1}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>2</span>
+                  <span>20</span>
+                </div>
+              </div>
+
+              {/* Question Count */}
+              <div className="space-y-2">
+                <Label>{t('gameSetup.questionCount')}</Label>
+                <div className="grid grid-cols-4 gap-2">
+                  {QUESTION_COUNTS.map((count) => (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => setQuestionCount(String(count))}
+                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+                        questionCount === String(count)
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-500/25'
+                          : 'bg-background border-border hover:border-purple-300 dark:hover:border-purple-700'
+                      }`}
+                      aria-pressed={questionCount === String(count)}
+                    >
+                      {count}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Time per Question */}
+              <div className="space-y-2">
+                <Label>{t('gameSetup.timePerQuestion')}</Label>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {TIME_OPTIONS.map((time) => (
+                    <button
+                      key={time}
+                      type="button"
+                      onClick={() => setTimePerQuestion(String(time))}
+                      className={`px-2 py-2 rounded-lg text-sm font-medium transition-all border ${
+                        timePerQuestion === String(time)
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-500/25'
+                          : 'bg-background border-border hover:border-purple-300 dark:hover:border-purple-700'
+                      }`}
+                      aria-pressed={timePerQuestion === String(time)}
+                    >
+                      {time}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Error */}
+              {error && (
+                <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 p-3 rounded-lg">
+                  {error}
+                </div>
+              )}
+
+              {/* Submit */}
+              <Button
+                type="submit"
+                disabled={loading || !playerName.trim()}
+                className="w-full h-12 text-lg bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 shadow-lg shadow-purple-500/25"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    {t('common.loading')}
+                  </>
+                ) : (
+                  t('gameSetup.createRoom')
+                )}
+              </Button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => setCurrentView('landing')}
+              >
+                {t('common.cancel')}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </motion.div>
+    </div>
+  )
+}
+
+
+=== src/components/quiz/JoinGameScreen.tsx ===
+'use client'
+
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { useTranslation } from '@/lib/i18n'
+import { useGameStore } from '@/lib/game-store'
+import { motion } from 'framer-motion'
+import { Loader2, LogIn } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+
+export default function JoinGameScreen() {
+  const { t } = useTranslation()
+  const { setCurrentView, setPlayerInfo, setGameInfo, setGameSettings, setPlayers } = useGameStore()
+
+  const [codeDigits, setCodeDigits] = useState<string[]>(['', '', '', '', '', ''])
+  const [playerName, setPlayerName] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([])
+
+  const code = codeDigits.join('').toUpperCase()
+
+  const focusInput = useCallback((index: number) => {
+    inputRefs.current[index]?.focus()
+  }, [])
+
+  const handleDigitChange = useCallback((index: number, value: string) => {
+    const digit = value.slice(-1).toUpperCase()
+    if (digit && !/^[A-HJ-NP-Z2-9]$/.test(digit)) return
+
+    const newDigits = [...codeDigits]
+    newDigits[index] = digit
+    setCodeDigits(newDigits)
+
+    // Auto-advance to next input
+    if (digit && index < 5) {
+      focusInput(index + 1)
+    }
+  }, [codeDigits, focusInput])
+
+  const handleKeyDown = useCallback((index: number, e: React.KeyboardEvent) => {
+    if (e.key === 'Backspace' && !codeDigits[index] && index > 0) {
+      focusInput(index - 1)
+    }
+  }, [codeDigits, focusInput])
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    e.preventDefault()
+    const pasted = e.clipboardData.getData('text').toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, '')
+    const digits = pasted.slice(0, 6).split('')
+    const newDigits = [...codeDigits]
+    digits.forEach((d, i) => {
+      if (i < 6) newDigits[i] = d
+    })
+    setCodeDigits(newDigits)
+    const nextEmpty = newDigits.findIndex((d) => !d)
+    focusInput(nextEmpty === -1 ? 5 : nextEmpty)
+  }, [codeDigits, focusInput])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (code.length !== 6 || !playerName.trim()) return
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch(`/api/game/${code}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerName: playerName.trim() }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        if (data.error?.includes('full')) {
+          throw new Error(t('join.roomFull'))
+        }
+        if (data.error?.includes('name') || data.error?.includes('taken')) {
+          throw new Error(t('join.nameTaken'))
+        }
+        throw new Error(t('join.invalidCode'))
+      }
+
+      const data = await res.json()
+
+      setPlayerInfo({
+        id: data.playerId,
+        name: playerName.trim(),
+        avatar: data.avatar || '🎮',
+        isHost: false,
+      })
+      setGameInfo({ code, id: data.gameId })
+
+      // Emit socket event
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('quiz-join-room', {
+            detail: { code, playerName: playerName.trim(), playerId: data.playerId },
+          })
+        )
+      }
+
+      setCurrentView('lobby')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to join game')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Keyboard shortcut: Enter to submit when form is valid
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && code.length === 6 && playerName.trim() && !loading) {
+        handleSubmit(e as unknown as React.FormEvent)
+      }
+    }
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown)
+  }, [code, playerName, loading, handleSubmit])
+
+  return (
+    <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-4 py-8">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="w-full max-w-md"
+      >
+        <Card className="border-border/50 shadow-xl">
+          <CardHeader className="text-center pb-2">
+            <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-purple-700 mx-auto mb-3">
+              <LogIn className="w-6 h-6 text-white" />
+            </div>
+            <CardTitle className="text-2xl">{t('join.title')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Room Code - OTP style */}
+              <div className="space-y-2">
+                <Label className="text-center block">{t('join.enterCode')}</Label>
+                <div
+                  className="flex gap-2 justify-center"
+                  onPaste={handlePaste}
+                  role="group"
+                  aria-label={t('join.enterCode')}
+                >
+                  {codeDigits.map((digit, index) => (
+                    <Input
+                      key={index}
+                      ref={(el) => { inputRefs.current[index] = el }}
+                      type="text"
+                      inputMode="text"
+                      maxLength={1}
+                      value={digit}
+                      onChange={(e) => handleDigitChange(index, e.target.value)}
+                      onKeyDown={(e) => handleKeyDown(index, e)}
+                      onFocus={() => inputRefs.current[index]?.select()}
+                      className={`w-11 h-14 text-center text-xl font-bold uppercase rounded-lg border-2 transition-all ${
+                        digit
+                          ? 'border-purple-500 bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300'
+                          : 'border-border'
+                      }`}
+                      aria-label={`Code digit ${index + 1}`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Player Name */}
+              <div className="space-y-2">
+                <Label htmlFor="joinPlayerName">{t('join.enterName')}</Label>
+                <Input
+                  id="joinPlayerName"
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  placeholder={t('join.enterName')}
+                  maxLength={20}
+                  required
+                  className="h-11"
+                />
+              </div>
+
+              {/* Error */}
+              {error && (
+                <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 p-3 rounded-lg">
+                  {error}
+                </div>
+              )}
+
+              {/* Submit */}
+              <Button
+                type="submit"
+                disabled={loading || code.length !== 6 || !playerName.trim()}
+                className="w-full h-12 text-lg bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 shadow-lg shadow-purple-500/25"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    {t('common.loading')}
+                  </>
+                ) : (
+                  t('join.join')
+                )}
+              </Button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => setCurrentView('landing')}
+              >
+                {t('common.cancel')}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </motion.div>
+    </div>
+  )
+}
+
+
+=== src/components/quiz/AdminPanel.tsx ===
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useTranslation } from '@/lib/i18n'
+import { useGameStore } from '@/lib/game-store'
+import { motion } from 'framer-motion'
+import { BarChart3, Users, Gamepad2, HelpCircle, ArrowLeft } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+
+interface AdminStats {
+  totalGames: number
+  activeGames: number
+  totalPlayers: number
+  totalQuestions: number
+  avgDuration?: number
+}
+
+interface AdminGame {
+  id: string
+  code: string
+  status: string
+  playerCount: number
+  category: string
+  createdAt: string
+}
+
+interface AdminQuestion {
+  id: string
+  text: string
+  category: string
+  difficulty: string
+  generatedBy: string
+  createdAt: string
+}
+
+export default function AdminPanel() {
+  const { t } = useTranslation()
+  const { setCurrentView } = useGameStore()
+
+  const [stats, setStats] = useState<AdminStats | null>(null)
+  const [games, setGames] = useState<AdminGame[]>([])
+  const [questions, setQuestions] = useState<AdminQuestion[]>([])
+  const [questionCategory, setQuestionCategory] = useState('all')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true)
+      try {
+        const [statsRes, gamesRes, questionsRes] = await Promise.all([
+          fetch('/api/admin/stats'),
+          fetch('/api/admin/games'),
+          fetch(`/api/admin/questions${questionCategory !== 'all' ? `?category=${questionCategory}` : ''}`),
+        ])
+
+        if (statsRes.ok) {
+          const data = await statsRes.json()
+          setStats(data)
+        }
+        if (gamesRes.ok) {
+          const data = await gamesRes.json()
+          setGames(Array.isArray(data) ? data : data.games || [])
+        }
+        if (questionsRes.ok) {
+          const data = await questionsRes.json()
+          setQuestions(Array.isArray(data) ? data : data.questions || [])
+        }
+      } catch (err) {
+        console.error('Failed to fetch admin data:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [questionCategory])
+
+  const statCards = [
+    {
+      title: t('admin.totalGames'),
+      value: stats?.totalGames ?? 0,
+      icon: Gamepad2,
+      color: 'from-purple-500 to-purple-600',
+    },
+    {
+      title: t('admin.activeGames'),
+      value: stats?.activeGames ?? 0,
+      icon: BarChart3,
+      color: 'from-emerald-500 to-emerald-600',
+    },
+    {
+      title: t('admin.totalPlayers'),
+      value: stats?.totalPlayers ?? 0,
+      icon: Users,
+      color: 'from-amber-500 to-amber-600',
+    },
+    {
+      title: t('admin.totalQuestions'),
+      value: stats?.totalQuestions ?? 0,
+      icon: HelpCircle,
+      color: 'from-rose-500 to-rose-600',
+    },
+  ]
+
+  return (
+    <div className="min-h-[calc(100vh-3.5rem)] px-4 py-6 sm:py-10 max-w-5xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-8">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setCurrentView('landing')}
+          aria-label={t('common.close')}
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </Button>
+        <h1 className="text-2xl sm:text-3xl font-bold">{t('admin.title')}</h1>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {statCards.map((stat, index) => (
+          <motion.div
+            key={stat.title}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: index * 0.1 }}
+          >
+            <Card className="border-border/50 overflow-hidden">
+              <CardContent className="p-4 sm:p-6">
+                <div className="flex items-center justify-between mb-3">
+                  <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${stat.color} flex items-center justify-center`}>
+                    <stat.icon className="w-5 h-5 text-white" />
+                  </div>
+                </div>
+                <p className="text-2xl sm:text-3xl font-bold">{stat.value}</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-1">{stat.title}</p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Recent Games */}
+      <Card className="border-border/50 mb-8">
+        <CardHeader>
+          <CardTitle className="text-lg">{t('admin.recentGames')}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : games.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">No games found</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border/40">
+                    <th className="text-left py-3 px-2 font-medium text-muted-foreground">Code</th>
+                    <th className="text-left py-3 px-2 font-medium text-muted-foreground">Status</th>
+                    <th className="text-left py-3 px-2 font-medium text-muted-foreground">Players</th>
+                    <th className="text-left py-3 px-2 font-medium text-muted-foreground hidden sm:table-cell">Category</th>
+                    <th className="text-left py-3 px-2 font-medium text-muted-foreground hidden sm:table-cell">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {games.slice(0, 10).map((game) => (
+                    <tr key={game.id} className="border-b border-border/20 hover:bg-muted/30 transition-colors">
+                      <td className="py-2.5 px-2 font-mono font-semibold">{game.code}</td>
+                      <td className="py-2.5 px-2">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${
+                            game.status === 'FINISHED'
+                              ? 'border-emerald-500 text-emerald-600'
+                              : game.status === 'PLAYING'
+                                ? 'border-amber-500 text-amber-600'
+                                : 'border-gray-400 text-gray-600'
+                          }`}
+                        >
+                          {game.status}
+                        </Badge>
+                      </td>
+                      <td className="py-2.5 px-2">{game.playerCount}</td>
+                      <td className="py-2.5 px-2 hidden sm:table-cell capitalize">{game.category}</td>
+                      <td className="py-2.5 px-2 hidden sm:table-cell text-muted-foreground">
+                        {new Date(game.createdAt).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Question Bank */}
+      <Card className="border-border/50">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg">{t('admin.questionBank')}</CardTitle>
+            <Select value={questionCategory} onValueChange={setQuestionCategory}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                <SelectItem value="general">General</SelectItem>
+                <SelectItem value="science">Science</SelectItem>
+                <SelectItem value="history">History</SelectItem>
+                <SelectItem value="geography">Geography</SelectItem>
+                <SelectItem value="sports">Sports</SelectItem>
+                <SelectItem value="entertainment">Entertainment</SelectItem>
+                <SelectItem value="technology">Technology</SelectItem>
+                <SelectItem value="literature">Literature</SelectItem>
+                <SelectItem value="art">Art</SelectItem>
+                <SelectItem value="music">Music</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : questions.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">No questions found</p>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {questions.slice(0, 20).map((question) => (
+                <div
+                  key={question.id}
+                  className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/80 transition-colors"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{question.text}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Badge variant="outline" className="text-xs capitalize">
+                        {question.category}
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">
+                        {question.difficulty}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${
+                          question.generatedBy === 'ai'
+                            ? 'border-purple-500 text-purple-600'
+                            : 'border-gray-400'
+                        }`}
+                      >
+                        {question.generatedBy === 'ai' ? 'AI' : 'Manual'}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+
+=== src/components/quiz/Header.tsx ===
+'use client'
+
+import { useTranslation, availableLocales, localeLabels, type Locale } from '@/lib/i18n'
+import { useGameStore } from '@/lib/game-store'
+import { Brain, Home, Settings, Wifi, WifiOff, Globe } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Badge } from '@/components/ui/badge'
+
+export default function Header() {
+  const { t, locale, setLocale } = useTranslation()
+  const { currentView, isConnected, setCurrentView, reset } = useGameStore()
+
+  const handleHome = () => {
+    reset()
+    setCurrentView('landing')
+  }
+
+  return (
+    <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-lg supports-[backdrop-filter]:bg-background/60">
+      <div className="flex h-14 items-center justify-between px-4 sm:px-6 max-w-7xl mx-auto">
+        {/* Logo */}
+        <button
+          onClick={handleHome}
+          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+          aria-label={t('app.title')}
+        >
+          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-purple-700">
+            <Brain className="w-5 h-5 text-white" />
+          </div>
+          <span className="font-bold text-lg tracking-tight hidden sm:inline bg-gradient-to-r from-purple-600 to-purple-800 bg-clip-text text-transparent">
+            QUIZ AI
+          </span>
+        </button>
+
+        {/* Right section */}
+        <div className="flex items-center gap-2">
+          {/* Connection status */}
+          <Badge
+            variant={isConnected ? 'default' : 'destructive'}
+            className={`hidden sm:flex items-center gap-1 text-xs ${
+              isConnected
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+            } border-0`}
+          >
+            {isConnected ? (
+              <Wifi className="w-3 h-3" />
+            ) : (
+              <WifiOff className="w-3 h-3" />
+            )}
+            {isConnected ? t('common.connected') : t('common.disconnected')}
+          </Badge>
+
+          {/* Mobile connection dot */}
+          <div
+            className={`sm:hidden w-2.5 h-2.5 rounded-full ${
+              isConnected ? 'bg-emerald-500' : 'bg-red-500'
+            }`}
+            aria-label={isConnected ? t('common.connected') : t('common.disconnected')}
+          />
+
+          {/* Language selector */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-1.5" aria-label={t('common.language')}>
+                <Globe className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">{localeLabels[locale]}</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {availableLocales.map((loc) => (
+                <DropdownMenuItem
+                  key={loc}
+                  onClick={() => setLocale(loc as Locale)}
+                  className={locale === loc ? 'bg-accent' : ''}
+                >
+                  {localeLabels[loc]}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Admin button */}
+          {currentView !== 'playing' && currentView !== 'results' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setCurrentView('admin')}
+              aria-label={t('admin.title')}
+            >
+              <Settings className="w-4 h-4" />
+            </Button>
+          )}
+
+          {/* Home button */}
+          {currentView !== 'landing' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleHome}
+              aria-label="Home"
+            >
+              <Home className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </header>
+  )
+}

@@ -1,0 +1,2544 @@
+=== src/lib/game-store.ts ===
+import { create } from 'zustand'
+
+export type GameView = 'landing' | 'create' | 'join' | 'lobby' | 'playing' | 'results' | 'admin'
+
+export interface Player {
+  id: string
+  socketId?: string
+  name: string
+  avatar: string
+  score: number
+  streak: number
+  isHost: boolean
+  isConnected: boolean
+}
+
+export interface Question {
+  index: number
+  text: string
+  options: string[]
+  correctIndex: number
+  category: string
+  difficulty: string
+}
+
+export interface GameSettings {
+  category: string
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'MIXED'
+  language: string
+  maxPlayers: number
+  questionCount: number
+  timePerQuestion: number
+}
+
+interface AnswerResult {
+  isCorrect: boolean
+  pointsEarned: number
+  correctIndex: number
+  explanation?: string
+}
+
+interface GameState {
+  // View management
+  currentView: GameView
+  setCurrentView: (view: GameView) => void
+
+  // Player info
+  playerId: string | null
+  playerName: string | null
+  playerAvatar: string | null
+  isHost: boolean
+  setPlayerInfo: (info: { id: string; name: string; avatar: string; isHost: boolean }) => void
+
+  // Game info
+  gameCode: string | null
+  gameId: string | null
+  setGameInfo: (info: { code: string; id: string }) => void
+
+  // Game state
+  players: Player[]
+  setPlayers: (players: Player[]) => void
+  addPlayer: (player: Player) => void
+  removePlayer: (playerId: string) => void
+  updatePlayerScore: (playerId: string, score: number, streak: number) => void
+
+  // Game settings
+  gameSettings: GameSettings | null
+  setGameSettings: (settings: GameSettings) => void
+
+  // Host flag (convenience setter)
+  setIsHost: (isHost: boolean) => void
+
+  // Quiz state
+  currentQuestion: Question | null
+  currentQuestionIndex: number
+  totalQuestions: number
+  timeRemaining: number
+  selectedOption: number | null
+  hasSubmittedAnswer: boolean
+  answerResult: AnswerResult | null
+  showResult: boolean
+
+  setQuestion: (question: Question, totalQuestions: number) => void
+  setTimeRemaining: (time: number) => void
+  setSelectedOption: (option: number | null) => void
+  setHasSubmittedAnswer: (submitted: boolean) => void
+  setAnswerResult: (result: AnswerResult | null) => void
+  setShowResult: (show: boolean) => void
+
+  // Results
+  finalResults: Player[]
+  setFinalResults: (results: Player[]) => void
+
+  // Connection
+  isConnected: boolean
+  setIsConnected: (connected: boolean) => void
+
+  // Error
+  error: string | null
+  setError: (error: string | null) => void
+
+  // Reset
+  reset: () => void
+}
+
+const initialState = {
+  currentView: 'landing' as GameView,
+  playerId: null,
+  playerName: null,
+  playerAvatar: null,
+  isHost: false,
+  gameCode: null,
+  gameId: null,
+  players: [],
+  gameSettings: null,
+  currentQuestion: null,
+  currentQuestionIndex: 0,
+  totalQuestions: 0,
+  timeRemaining: 0,
+  selectedOption: null,
+  hasSubmittedAnswer: false,
+  answerResult: null,
+  showResult: false,
+  finalResults: [],
+  isConnected: false,
+  error: null,
+}
+
+export const useGameStore = create<GameState>((set) => ({
+  ...initialState,
+
+  setCurrentView: (view) => set({ currentView: view }),
+
+  setPlayerInfo: (info) =>
+    set({
+      playerId: info.id,
+      playerName: info.name,
+      playerAvatar: info.avatar,
+      isHost: info.isHost,
+    }),
+
+  setGameInfo: (info) =>
+    set({
+      gameCode: info.code,
+      gameId: info.id,
+    }),
+
+  setPlayers: (players) => set({ players }),
+
+  addPlayer: (player) =>
+    set((state) => {
+      const exists = state.players.some((p) => p.id === player.id)
+      if (exists) {
+        return {
+          players: state.players.map((p) => (p.id === player.id ? player : p)),
+        }
+      }
+      return { players: [...state.players, player] }
+    }),
+
+  removePlayer: (playerId) =>
+    set((state) => ({
+      players: state.players.filter((p) => p.id !== playerId),
+    })),
+
+  updatePlayerScore: (playerId, score, streak) =>
+    set((state) => ({
+      players: state.players.map((p) =>
+        p.id === playerId ? { ...p, score, streak } : p
+      ),
+    })),
+
+  setGameSettings: (settings) => set({ gameSettings: settings }),
+  setIsHost: (isHost) => set({ isHost }),
+
+  setQuestion: (question, totalQuestions) =>
+    set({
+      currentQuestion: question,
+      currentQuestionIndex: question.index,
+      totalQuestions,
+      selectedOption: null,
+      hasSubmittedAnswer: false,
+      answerResult: null,
+      showResult: false,
+    }),
+
+  setTimeRemaining: (time) => set({ timeRemaining: time }),
+  setSelectedOption: (option) => set({ selectedOption: option }),
+  setHasSubmittedAnswer: (submitted) => set({ hasSubmittedAnswer: submitted }),
+  setAnswerResult: (result) => set({ answerResult: result }),
+  setShowResult: (show) => set({ showResult: show }),
+
+  setFinalResults: (results) => set({ finalResults: results }),
+  setIsConnected: (connected) => set({ isConnected: connected }),
+  setError: (error) => set({ error }),
+
+  reset: () => set(initialState),
+}))
+
+
+=== src/lib/game-utils.ts ===
+/**
+ * Generate a unique 6-character game code.
+ * Avoids ambiguous characters: O, 0, I, 1
+ */
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+export function generateGameCode(): string {
+  let code = ''
+  for (let i = 0; i < 6; i++) {
+    code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]
+  }
+  return code
+}
+
+/**
+ * Validate that a game code matches expected format
+ */
+export function isValidGameCode(code: string): boolean {
+  return /^[A-HJ-NP-Z2-9]{6}$/i.test(code)
+}
+
+/**
+ * Category labels for AI prompt
+ */
+export const CATEGORY_LABELS: Record<string, string> = {
+  general: 'General Knowledge',
+  science: 'Science',
+  history: 'History',
+  geography: 'Geography',
+  sports: 'Sports',
+  entertainment: 'Entertainment',
+  technology: 'Technology',
+  literature: 'Literature',
+  art: 'Art',
+  music: 'Music',
+}
+
+export const VALID_CATEGORIES = Object.keys(CATEGORY_LABELS)
+export const VALID_DIFFICULTIES = ['EASY', 'MEDIUM', 'HARD', 'MIXED']
+
+
+=== src/lib/i18n.tsx ===
+"use client";
+
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useSyncExternalStore,
+  useState,
+} from "react";
+import ptBR, { type Translations } from "./translations/pt-BR";
+import enUS from "./translations/en-US";
+import esES from "./translations/es-ES";
+
+// ---------------------------------------------------------------------------
+// Locale configuration
+// ---------------------------------------------------------------------------
+
+export type Locale = "pt-BR" | "en-US" | "es-ES";
+
+export const defaultLocale: Locale = "pt-BR";
+
+export const availableLocales: Locale[] = ["pt-BR", "en-US", "es-ES"];
+
+/** Human-readable labels for the locale selector */
+export const localeLabels: Record<Locale, string> = {
+  "pt-BR": "Português",
+  "en-US": "English",
+  "es-ES": "Español",
+};
+
+/** RTL support – currently none of our locales are RTL but the structure
+ *  allows adding RTL locales (e.g. ar, he) in the future. */
+export const rtlLocales: Locale[] = [];
+
+export function isRTL(locale: Locale): boolean {
+  return rtlLocales.includes(locale);
+}
+
+// ---------------------------------------------------------------------------
+// Translation map & resolution
+// ---------------------------------------------------------------------------
+
+const translationMap: Record<Locale, Translations> = {
+  "pt-BR": ptBR,
+  "en-US": enUS,
+  "es-ES": esES,
+};
+
+/**
+ * Resolve a nested key like "app.title" or "landing.features.step1"
+ * from a translations object.
+ */
+function resolve(obj: Record<string, unknown>, path: string): string | undefined {
+  const keys = path.split(".");
+  let current: unknown = obj;
+  for (const key of keys) {
+    if (current === null || current === undefined || typeof current !== "object") {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "string" ? current : undefined;
+}
+
+/**
+ * Interpolate parameters like `{name}` in a translation string.
+ */
+function interpolate(
+  template: string,
+  params?: Record<string, string>,
+): string {
+  if (!params) return template;
+  return template.replace(/\{(\w+)\}/g, (_, key) => params[key] ?? `{${key}}`);
+}
+
+// ---------------------------------------------------------------------------
+// Detect initial locale
+// ---------------------------------------------------------------------------
+
+const STORAGE_KEY = "quiz-ai-locale";
+
+function detectLocale(): Locale {
+  // 1. Check localStorage for a saved preference
+  if (typeof window !== "undefined") {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved && availableLocales.includes(saved as Locale)) {
+        return saved as Locale;
+      }
+    } catch {
+      // localStorage might be unavailable (e.g. private browsing)
+    }
+
+    // 2. Detect from navigator.languages / Accept-Language header equivalent
+    const browserLangs = navigator.languages ?? [navigator.language];
+    for (const lang of browserLangs) {
+      // Exact match (e.g. "pt-BR")
+      if (availableLocales.includes(lang as Locale)) {
+        return lang as Locale;
+      }
+      // Prefix match (e.g. "pt" → "pt-BR", "en" → "en-US", "es" → "es-ES")
+      const prefix = lang.split("-")[0];
+      const match = availableLocales.find((l) => l.startsWith(prefix));
+      if (match) return match;
+    }
+  }
+
+  return defaultLocale;
+}
+
+// ---------------------------------------------------------------------------
+// Client mount detection (avoids setState in useEffect)
+// ---------------------------------------------------------------------------
+
+const emptySubscribe = () => () => {};
+const getIsClient = () => true;
+const getIsServer = () => false;
+
+function useIsMounted(): boolean {
+  return useSyncExternalStore(emptySubscribe, getIsClient, getIsServer);
+}
+
+// ---------------------------------------------------------------------------
+// Translation key type
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively gather all dot-separated key paths from the Translations type.
+ * e.g. "app.title" | "landing.features.step1" | ...
+ */
+type Paths<T, Prefix extends string = ""> = T extends string
+  ? Prefix
+  : T extends object
+    ? {
+        [K in keyof T & string]: Paths<T[K], Prefix extends "" ? K : `${Prefix}.${K}`>;
+      }[keyof T & string]
+    : never;
+
+export type TranslationKey = Paths<Translations>;
+
+// ---------------------------------------------------------------------------
+// Context
+// ---------------------------------------------------------------------------
+
+interface I18nContextValue {
+  locale: Locale;
+  setLocale: (locale: Locale) => void;
+  t: (key: TranslationKey, params?: Record<string, string>) => string;
+}
+
+const I18nContext = createContext<I18nContextValue | null>(null);
+
+// ---------------------------------------------------------------------------
+// Provider
+// ---------------------------------------------------------------------------
+
+export function I18nProvider({ children }: { children: React.ReactNode }) {
+  const mounted = useIsMounted();
+
+  // Use lazy initializer to detect locale on the client during first render.
+  // On the server it falls back to defaultLocale, but since we render `null`
+  // until mounted, there's no hydration mismatch.
+  const [locale, setLocaleState] = useState<Locale>(() => {
+    if (typeof window !== "undefined") {
+      return detectLocale();
+    }
+    return defaultLocale;
+  });
+
+  const setLocale = useCallback((newLocale: Locale) => {
+    if (!availableLocales.includes(newLocale)) return;
+    setLocaleState(newLocale);
+    try {
+      localStorage.setItem(STORAGE_KEY, newLocale);
+    } catch {
+      // Silently fail if localStorage is unavailable
+    }
+    // Set document direction for potential RTL support
+    if (typeof document !== "undefined") {
+      document.documentElement.dir = isRTL(newLocale) ? "rtl" : "ltr";
+      document.documentElement.lang = newLocale;
+    }
+  }, []);
+
+  const t = useCallback(
+    (key: TranslationKey, params?: Record<string, string>): string => {
+      const translations = translationMap[locale] ?? translationMap[defaultLocale];
+      const template = resolve(translations as unknown as Record<string, unknown>, key);
+      if (template === undefined) {
+        // Fallback: try default locale, then return the key itself
+        const fallback = resolve(
+          translationMap[defaultLocale] as unknown as Record<string, unknown>,
+          key,
+        );
+        if (fallback !== undefined) return interpolate(fallback, params);
+        console.warn(`[i18n] Missing translation key: ${key}`);
+        return key;
+      }
+      return interpolate(template, params);
+    },
+    [locale],
+  );
+
+  const value = useMemo(
+    () => ({ locale, setLocale, t }),
+    [locale, setLocale, t],
+  );
+
+  // Prevent flash of wrong locale: render nothing until we've detected the
+  // correct locale from localStorage / navigator on the client.
+  // Always render children - the locale detection happens on mount
+  // and the context value updates reactively
+
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+}
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
+export function useTranslation() {
+  const ctx = useContext(I18nContext);
+  if (!ctx) {
+    throw new Error("useTranslation must be used within an <I18nProvider>");
+  }
+  return ctx;
+}
+
+// ---------------------------------------------------------------------------
+// Standalone t function (for use outside React components)
+// ---------------------------------------------------------------------------
+
+let _currentLocale: Locale = defaultLocale;
+
+export function setLanguage(lang: Locale) {
+  if (!availableLocales.includes(lang)) return;
+  _currentLocale = lang;
+}
+
+export function t(key: TranslationKey, params?: Record<string, string>): string {
+  const translations = translationMap[_currentLocale] ?? translationMap[defaultLocale];
+  const template = resolve(translations as unknown as Record<string, unknown>, key);
+  if (template === undefined) {
+    const fallback = resolve(
+      translationMap[defaultLocale] as unknown as Record<string, unknown>,
+      key,
+    );
+    if (fallback !== undefined) return interpolate(fallback, params);
+    return key;
+  }
+  return interpolate(template, params);
+}
+
+
+=== src/lib/translations/pt-BR.ts ===
+const ptBR = {
+  // App
+  app: {
+    title: "QUIZ AI",
+    subtitle: "Quiz Orquestrado por IA",
+    description: "Jogo de quiz online entre jogadores com auxílio de IA",
+  },
+
+  // Landing
+  landing: {
+    createGame: "Criar Jogo",
+    joinGame: "Entrar no Jogo",
+    heroTitle: "Desafie seus amigos com perguntas geradas por IA!",
+    heroSubtitle: "Crie uma sala, compartilhe o código e divirta-se!",
+    features: {
+      title: "Como Funciona",
+      step1: "Crie uma sala de jogo",
+      step2: "Compartilhe o código com amigos",
+      step3: "Responda perguntas geradas por IA",
+      step4: "Vença seus amigos!",
+    },
+  },
+
+  // Game Setup
+  gameSetup: {
+    title: "Configurar Jogo",
+    category: "Categoria",
+    difficulty: "Dificuldade",
+    language: "Idioma das Perguntas",
+    maxPlayers: "Máximo de Jogadores",
+    questionCount: "Número de Perguntas",
+    timePerQuestion: "Tempo por Pergunta (seg)",
+    startGame: "Iniciar Jogo",
+    createRoom: "Criar Sala",
+  },
+
+  // Categories
+  category: {
+    general: "Geral",
+    science: "Ciência",
+    history: "História",
+    geography: "Geografia",
+    sports: "Esportes",
+    entertainment: "Entretenimento",
+    technology: "Tecnologia",
+    literature: "Literatura",
+    art: "Arte",
+    music: "Música",
+  },
+
+  // Difficulty
+  difficulty: {
+    EASY: "Fácil",
+    MEDIUM: "Médio",
+    HARD: "Difícil",
+    MIXED: "Misto",
+  },
+
+  // Lobby
+  lobby: {
+    title: "Sala de Espera",
+    roomCode: "Código da Sala",
+    players: "Jogadores",
+    waitingForHost: "Aguardando o anfitrião iniciar o jogo...",
+    startGame: "Iniciar Jogo",
+    shareCode: "Compartilhe este código com seus amigos!",
+    youAreHost: "Você é o anfitrião",
+    playerJoined: "{name} entrou na sala",
+    playerLeft: "{name} saiu da sala",
+  },
+
+  // Join
+  join: {
+    title: "Entrar no Jogo",
+    enterCode: "Digite o código da sala",
+    enterName: "Digite seu nome",
+    join: "Entrar",
+    invalidCode: "Código inválido",
+    roomFull: "Sala cheia",
+    nameTaken: "Nome já em uso",
+  },
+
+  // Quiz Play
+  quiz: {
+    question: "Pergunta {current} de {total}",
+    timeLeft: "Tempo restante",
+    submitAnswer: "Enviar Resposta",
+    correct: "Correto! +{points} pontos",
+    incorrect: "Incorreto! A resposta era {answer}",
+    streak: "Sequência de {count}!",
+    waitingForOthers: "Aguardando outros jogadores...",
+    nextQuestion: "Próxima pergunta em {seconds}s...",
+  },
+
+  // Results
+  results: {
+    title: "Resultados Finais",
+    winner: "🏆 Vencedor: {name}!",
+    yourScore: "Sua Pontuação: {score}",
+    playAgain: "Jogar Novamente",
+    backToHome: "Voltar ao Início",
+    rank: "Posição",
+    player: "Jogador",
+    score: "Pontuação",
+    accuracy: "Precisão",
+  },
+
+  // Admin
+  admin: {
+    title: "Painel Administrativo",
+    stats: "Estatísticas",
+    totalGames: "Total de Jogos",
+    activeGames: "Jogos Ativos",
+    totalPlayers: "Total de Jogadores",
+    totalQuestions: "Total de Perguntas",
+    recentGames: "Jogos Recentes",
+    questionBank: "Banco de Perguntas",
+    manageQuestions: "Gerenciar Perguntas",
+  },
+
+  // Common
+  common: {
+    loading: "Carregando...",
+    error: "Erro",
+    retry: "Tentar Novamente",
+    cancel: "Cancelar",
+    confirm: "Confirmar",
+    save: "Salvar",
+    close: "Fechar",
+    language: "Idioma",
+    connected: "Conectado",
+    disconnected: "Desconectado",
+    seconds: "segundos",
+  },
+} as const;
+
+export default ptBR;
+export type Translations = typeof ptBR;
+
+
+=== src/lib/db.ts ===
+import { PrismaClient } from '@prisma/client'
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined
+}
+
+export const db =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    log: ['query'],
+  })
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
+
+=== src/app/layout.tsx ===
+import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
+import "./globals.css";
+import { Toaster } from "@/components/ui/sonner";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "QUIZ AI - Quiz Orquestrado por IA",
+  description: "Jogo de quiz online multiplayer com perguntas geradas por IA. Crie salas, desafie amigos e divirta-se!",
+  keywords: ["quiz", "AI", "multiplayer", "party game", "trivia", "perguntas", "jogo online"],
+  authors: [{ name: "QUIZ AI Team" }],
+  icons: {
+    icon: "/quiz-logo.png",
+  },
+  openGraph: {
+    title: "QUIZ AI - Quiz Orquestrado por IA",
+    description: "Desafie seus amigos com perguntas geradas por IA!",
+    type: "website",
+  },
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="pt-BR" suppressHydrationWarning>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+      >
+        {children}
+        <Toaster position="top-center" richColors />
+      </body>
+    </html>
+  );
+}
+
+
+=== src/app/globals.css ===
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+
+=== prisma/schema.prisma ===
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Game {
+  id                  String      @id @default(cuid())
+  code                String      @unique
+  status              String      @default("WAITING")
+  category            String
+  difficulty          String      @default("MIXED")
+  language            String      @default("pt-BR")
+  maxPlayers          Int         @default(8)
+  questionCount       Int         @default(10)
+  timePerQuestion     Int         @default(30)
+  currentQuestionIndex Int        @default(0)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  players   Player[]    @relation("GamePlayers")
+  questions Question[]  @relation("GameQuestions")
+  stats     GameStats?
+}
+
+model Player {
+  id         String   @id @default(cuid())
+  name       String
+  avatar     String   @default("🎮")
+  score      Int      @default(0)
+  streak     Int      @default(0)
+  socketId   String?
+  isHost     Boolean  @default(false)
+  isConnected Boolean @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  gameId String
+  game   Game   @relation("GamePlayers", fields: [gameId], references: [id], onDelete: Cascade)
+
+  answers Answer[]
+}
+
+model Question {
+  id             String   @id @default(cuid())
+  text           String
+  optionA        String
+  optionB        String
+  optionC        String
+  optionD        String
+  correctAnswer  String
+  explanation    String?
+  order          Int
+  timeLimit      Int      @default(30)
+  createdAt      DateTime @default(now())
+
+  gameId String
+  game   Game   @relation("GameQuestions", fields: [gameId], references: [id], onDelete: Cascade)
+
+  answers Answer[]
+}
+
+model Answer {
+  id               String   @id @default(cuid())
+  selectedOption   String
+  isCorrect        Boolean
+  responseTimeMs   Int
+  createdAt        DateTime @default(now())
+
+  playerId   String
+  player     Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+model GameStats {
+  id                     String   @id @default(cuid())
+  totalQuestions         Int
+  averageResponseTimeMs  Int      @default(0)
+  perfectScores          Int      @default(0)
+  createdAt              DateTime @default(now())
+
+  gameId String @unique
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+}
+
+
+=== mini-services/quiz-service/index.ts ===
+import { createServer } from 'http'
+import { Server, Socket } from 'socket.io'
+
+const httpServer = createServer()
+const io = new Server(httpServer, {
+  path: '/',
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+})
+
+// ============================================================
+// Types
+// ============================================================
+
+interface GameSettings {
+  category: string
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'MIXED'
+  language: string
+  maxPlayers: number
+  questionCount: number
+  timePerQuestion: number // seconds
+}
+
+interface PlayerState {
+  id: string
+  socketId: string
+  name: string
+  avatar: string
+  score: number
+  streak: number
+  isHost: boolean
+  isConnected: boolean
+}
+
+interface Question {
+  index: number
+  text: string
+  options: string[]
+  correctIndex: number
+  category: string
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD'
+}
+
+interface PlayerAnswer {
+  playerId: string
+  selectedIndex: number
+  responseTime: number // ms
+  isCorrect: boolean
+  pointsEarned: number
+}
+
+interface GameRoom {
+  code: string
+  hostSocketId: string
+  players: Map<string, PlayerState>
+  status: 'WAITING' | 'PLAYING' | 'QUESTION' | 'ANSWER_REVEAL' | 'FINISHED'
+  settings: GameSettings
+  currentQuestionIndex: number
+  questions: Question[]
+  answers: Map<string, PlayerAnswer[]> // questionIndex string -> answers
+  timer: ReturnType<typeof setTimeout> | null
+  timeRemaining: number
+  disconnectTimers: Map<string, ReturnType<typeof setTimeout>>
+}
+
+// ============================================================
+// In-Memory Store
+// ============================================================
+
+const rooms = new Map<string, GameRoom>()
+const socketToRoom = new Map<string, string>() // socketId -> roomCode
+const socketToPlayerId = new Map<string, string>() // socketId -> playerId
+
+// ============================================================
+// Helpers
+// ============================================================
+
+const AVATARS = [
+  '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯',
+  '🦁', '🐮', '🐷', '🐸', '🐵', '🐔', '🐧', '🐦', '🐤', '🦆',
+  '🦅', '🦉', '🦇', '🐺', '🐗', '🐴', '🦄', '🐝', '🪱', '🐛',
+  '🦋', '🐌', '🐞', '🐜', '🪰', '🪲', '🪳', '🦟', '🦗', '🕷️',
+  '🦂', '🐢', '🐍', '🦎', '🦖', '🦕', '🐙', '🦑', '🦐', '🦞',
+]
+
+function generateRoomCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no confusing chars like O/0/I/1
+  let code = ''
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return code
+}
+
+function generatePlayerId(): string {
+  return 'p_' + Math.random().toString(36).substring(2, 10)
+}
+
+function getRandomAvatar(): string {
+  return AVATARS[Math.floor(Math.random() * AVATARS.length)]
+}
+
+function getUniqueRoomCode(): string {
+  let code = generateRoomCode()
+  let attempts = 0
+  while (rooms.has(code) && attempts < 100) {
+    code = generateRoomCode()
+    attempts++
+  }
+  return code
+}
+
+// ============================================================
+// Sample Question Generation
+// ============================================================
+
+const SAMPLE_QUESTIONS: Omit<Question, 'index'>[] = [
+  { text: 'What is the capital of France?', options: ['London', 'Berlin', 'Paris', 'Madrid'], correctIndex: 2, category: 'Geography', difficulty: 'EASY' },
+  { text: 'Which planet is known as the Red Planet?', options: ['Venus', 'Mars', 'Jupiter', 'Saturn'], correctIndex: 1, category: 'Science', difficulty: 'EASY' },
+  { text: 'What is the largest ocean on Earth?', options: ['Atlantic', 'Indian', 'Arctic', 'Pacific'], correctIndex: 3, category: 'Geography', difficulty: 'EASY' },
+  { text: 'Who painted the Mona Lisa?', options: ['Van Gogh', 'Picasso', 'Da Vinci', 'Michelangelo'], correctIndex: 2, category: 'Art', difficulty: 'MEDIUM' },
+  { text: 'What is the chemical symbol for gold?', options: ['Go', 'Gd', 'Au', 'Ag'], correctIndex: 2, category: 'Science', difficulty: 'MEDIUM' },
+  { text: 'In which year did World War II end?', options: ['1943', '1944', '1945', '1946'], correctIndex: 2, category: 'History', difficulty: 'MEDIUM' },
+  { text: 'What is the smallest country in the world?', options: ['Monaco', 'Vatican City', 'San Marino', 'Liechtenstein'], correctIndex: 1, category: 'Geography', difficulty: 'MEDIUM' },
+  { text: 'Which element has the atomic number 1?', options: ['Helium', 'Hydrogen', 'Lithium', 'Carbon'], correctIndex: 1, category: 'Science', difficulty: 'EASY' },
+  { text: 'What is the longest river in the world?', options: ['Amazon', 'Nile', 'Mississippi', 'Yangtze'], correctIndex: 1, category: 'Geography', difficulty: 'HARD' },
+  { text: 'Who wrote "Romeo and Juliet"?', options: ['Charles Dickens', 'William Shakespeare', 'Jane Austen', 'Mark Twain'], correctIndex: 1, category: 'Literature', difficulty: 'EASY' },
+  { text: 'What is the speed of light approximately?', options: ['300,000 km/s', '150,000 km/s', '500,000 km/s', '1,000,000 km/s'], correctIndex: 0, category: 'Science', difficulty: 'MEDIUM' },
+  { text: 'Which country has the most population?', options: ['USA', 'India', 'China', 'Indonesia'], correctIndex: 1, category: 'Geography', difficulty: 'MEDIUM' },
+  { text: 'What is the hardest natural substance?', options: ['Gold', 'Iron', 'Diamond', 'Platinum'], correctIndex: 2, category: 'Science', difficulty: 'EASY' },
+  { text: 'Who discovered penicillin?', options: ['Marie Curie', 'Alexander Fleming', 'Louis Pasteur', 'Joseph Lister'], correctIndex: 1, category: 'Science', difficulty: 'HARD' },
+  { text: 'What is the largest mammal?', options: ['Elephant', 'Blue Whale', 'Giraffe', 'Hippopotamus'], correctIndex: 1, category: 'Nature', difficulty: 'EASY' },
+  { text: 'In which continent is Brazil located?', options: ['North America', 'Europe', 'South America', 'Africa'], correctIndex: 2, category: 'Geography', difficulty: 'EASY' },
+  { text: 'What is the boiling point of water at sea level?', options: ['90°C', '100°C', '110°C', '120°C'], correctIndex: 1, category: 'Science', difficulty: 'EASY' },
+  { text: 'Which organ in the human body is the largest?', options: ['Heart', 'Liver', 'Brain', 'Skin'], correctIndex: 3, category: 'Science', difficulty: 'HARD' },
+  { text: 'What year was the first iPhone released?', options: ['2005', '2006', '2007', '2008'], correctIndex: 2, category: 'Technology', difficulty: 'MEDIUM' },
+  { text: 'Which gas do plants absorb from the atmosphere?', options: ['Oxygen', 'Nitrogen', 'Carbon Dioxide', 'Hydrogen'], correctIndex: 2, category: 'Science', difficulty: 'EASY' },
+]
+
+function generateQuestions(count: number, difficulty: string): Question[] {
+  let pool = [...SAMPLE_QUESTIONS]
+
+  // Filter by difficulty if not MIXED
+  if (difficulty !== 'MIXED') {
+    const filtered = pool.filter((q) => q.difficulty === difficulty)
+    if (filtered.length >= count) {
+      pool = filtered
+    }
+    // If not enough questions of that difficulty, fall back to all
+  }
+
+  // Shuffle and pick
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]]
+  }
+
+  const selected = pool.slice(0, Math.min(count, pool.length))
+
+  // If we need more questions than available, repeat with variations
+  while (selected.length < count) {
+    const extra = { ...pool[selected.length % pool.length] }
+    selected.push(extra)
+  }
+
+  return selected.map((q, i) => ({ ...q, index: i }))
+}
+
+// ============================================================
+// Scoring
+// ============================================================
+
+function calculateScore(isCorrect: boolean, responseTime: number, timePerQuestion: number, streak: number): number {
+  if (!isCorrect) return 0
+
+  const base = 100
+  // Speed bonus: faster = more points, up to 50
+  const timeRatio = 1 - Math.min(responseTime / (timePerQuestion * 1000), 1)
+  const speedBonus = Math.round(timeRatio * 50)
+  // Streak bonus: 10 * streak, capped at streak of 10
+  const streakBonus = Math.min(streak, 10) * 10
+
+  return base + speedBonus + streakBonus
+}
+
+// ============================================================
+// Room State Serialization (for client)
+// ============================================================
+
+interface SerializedPlayer {
+  id: string
+  name: string
+  avatar: string
+  score: number
+  streak: number
+  isHost: boolean
+  isConnected: boolean
+}
+
+interface SerializedRoomState {
+  code: string
+  status: GameRoom['status']
+  settings: GameSettings
+  currentQuestionIndex: number
+  totalQuestions: number
+  players: SerializedPlayer[]
+  timeRemaining: number
+}
+
+function serializeRoomState(room: GameRoom): SerializedRoomState {
+  const players: SerializedPlayer[] = []
+  room.players.forEach((p) => {
+    players.push({
+      id: p.id,
+      name: p.name,
+      avatar: p.avatar,
+      score: p.score,
+      streak: p.streak,
+      isHost: p.isHost,
+      isConnected: p.isConnected,
+    })
+  })
+
+  return {
+    code: room.code,
+    status: room.status,
+    settings: room.settings,
+    currentQuestionIndex: room.currentQuestionIndex,
+    totalQuestions: room.questions.length,
+    players,
+    timeRemaining: room.timeRemaining,
+  }
+}
+
+// ============================================================
+// Timer Management
+// ============================================================
+
+function startQuestionTimer(room: GameRoom) {
+  clearQuestionTimer(room)
+
+  room.timeRemaining = room.settings.timePerQuestion
+  io.to(room.code).emit('timer-sync', { timeRemaining: room.timeRemaining })
+
+  room.timer = setInterval(() => {
+    room.timeRemaining -= 1
+
+    if (room.timeRemaining <= 0) {
+      room.timeRemaining = 0
+      clearQuestionTimer(room)
+      handleQuestionTimeout(room)
+    }
+
+    io.to(room.code).emit('timer-sync', { timeRemaining: room.timeRemaining })
+  }, 1000)
+}
+
+function clearQuestionTimer(room: GameRoom) {
+  if (room.timer) {
+    clearInterval(room.timer)
+    room.timer = null
+  }
+}
+
+// ============================================================
+// Question Flow
+// ============================================================
+
+function handleQuestionTimeout(room: GameRoom) {
+  // Auto-submit for players who haven't answered
+  const currentAnswers = room.answers.get(String(room.currentQuestionIndex)) || []
+
+  room.players.forEach((player) => {
+    if (!player.isConnected) return
+    const hasAnswered = currentAnswers.some((a) => a.playerId === player.id)
+    if (!hasAnswered) {
+      currentAnswers.push({
+        playerId: player.id,
+        selectedIndex: -1, // no answer
+        responseTime: room.settings.timePerQuestion * 1000,
+        isCorrect: false,
+        pointsEarned: 0,
+      })
+    }
+  })
+
+  room.answers.set(String(room.currentQuestionIndex), currentAnswers)
+  revealAnswer(room)
+}
+
+function revealAnswer(room: GameRoom) {
+  room.status = 'ANSWER_REVEAL'
+
+  const question = room.questions[room.currentQuestionIndex]
+  const currentAnswers = room.answers.get(String(room.currentQuestionIndex)) || []
+
+  // Update player scores and streaks
+  currentAnswers.forEach((answer) => {
+    const player = room.players.get(answer.playerId)
+    if (!player) return
+
+    if (answer.isCorrect) {
+      player.streak += 1
+      player.score += answer.pointsEarned
+    } else {
+      player.streak = 0
+    }
+  })
+
+  // Build result for broadcast
+  const resultAnswers = currentAnswers.map((a) => {
+    const player = room.players.get(a.playerId)
+    return {
+      playerId: a.playerId,
+      playerName: player?.name || 'Unknown',
+      playerAvatar: player?.avatar || '❓',
+      selectedIndex: a.selectedIndex,
+      isCorrect: a.isCorrect,
+      pointsEarned: a.pointsEarned,
+      responseTime: a.responseTime,
+    }
+  })
+
+  // Get updated leaderboard
+  const leaderboard = getLeaderboard(room)
+
+  io.to(room.code).emit('question-result', {
+    questionIndex: room.currentQuestionIndex,
+    correctIndex: question.correctIndex,
+    correctOption: question.options[question.correctIndex],
+    answers: resultAnswers,
+    leaderboard,
+  })
+
+  io.to(room.code).emit('score-update', {
+    players: leaderboard,
+  })
+
+  // After 3 seconds, move to next question or end game
+  setTimeout(() => {
+    if (room.status === 'FINISHED') return
+
+    if (room.currentQuestionIndex >= room.questions.length - 1) {
+      endGame(room)
+    } else {
+      sendNextQuestion(room)
+    }
+  }, 3000)
+}
+
+function sendNextQuestion(room: GameRoom) {
+  room.currentQuestionIndex += 1
+  room.status = 'QUESTION'
+
+  const question = room.questions[room.currentQuestionIndex]
+
+  // Send question without revealing correct answer
+  io.to(room.code).emit('next-question', {
+    index: question.index,
+    text: question.text,
+    options: question.options,
+    category: question.category,
+    difficulty: question.difficulty,
+    timePerQuestion: room.settings.timePerQuestion,
+  })
+
+  // Start the countdown timer
+  startQuestionTimer(room)
+}
+
+function endGame(room: GameRoom) {
+  room.status = 'FINISHED'
+  clearQuestionTimer(room)
+
+  const leaderboard = getLeaderboard(room)
+
+  io.to(room.code).emit('game-ended', {
+    leaderboard,
+    roomCode: room.code,
+  })
+}
+
+function getLeaderboard(room: GameRoom) {
+  const players: Array<{
+    id: string
+    name: string
+    avatar: string
+    score: number
+    streak: number
+    isHost: boolean
+    isConnected: boolean
+  }> = []
+
+  room.players.forEach((p) => {
+    players.push({
+      id: p.id,
+      name: p.name,
+      avatar: p.avatar,
+      score: p.score,
+      streak: p.streak,
+      isHost: p.isHost,
+      isConnected: p.isConnected,
+    })
+  })
+
+  // Sort by score descending
+  players.sort((a, b) => b.score - a.score)
+
+  return players
+}
+
+function allConnectedPlayersAnswered(room: GameRoom): boolean {
+  const currentAnswers = room.answers.get(String(room.currentQuestionIndex)) || []
+  const answeredIds = new Set(currentAnswers.map((a) => a.playerId))
+
+  let allAnswered = true
+  room.players.forEach((p) => {
+    if (p.isConnected && !answeredIds.has(p.id)) {
+      allAnswered = false
+    }
+  })
+
+  return allAnswered
+}
+
+// ============================================================
+// Host Transfer
+// ============================================================
+
+function transferHost(room: GameRoom) {
+  // Find first connected non-host player
+  let newHost: PlayerState | null = null
+  room.players.forEach((p) => {
+    if (!p.isHost && p.isConnected && !newHost) {
+      newHost = p
+    }
+  })
+
+  if (newHost) {
+    // Remove old host flag from all players
+    room.players.forEach((p) => {
+      p.isHost = false
+    })
+
+    newHost.isHost = true
+    room.hostSocketId = newHost.socketId
+
+    io.to(room.code).emit('player-joined', {
+      player: {
+        id: newHost.id,
+        name: newHost.name,
+        avatar: newHost.avatar,
+        score: newHost.score,
+        streak: newHost.streak,
+        isHost: true,
+        isConnected: true,
+      },
+      message: `${newHost.name} is now the host`,
+    })
+
+    // Send room state to new host
+    io.to(newHost.socketId).emit('room-state', serializeRoomState(room))
+
+    console.log(`[Room ${room.code}] Host transferred to ${newHost.name}`)
+  }
+}
+
+// ============================================================
+// Socket.IO Connection Handler
+// ============================================================
+
+io.on('connection', (socket: Socket) => {
+  console.log(`[Connect] ${socket.id}`)
+
+  // ----------------------------------------------------------
+  // create-room
+  // ----------------------------------------------------------
+  socket.on('create-room', (data: { settings: GameSettings; playerName: string; playerId?: string }) => {
+    const { settings, playerName, playerId: providedPlayerId } = data
+
+    const code = getUniqueRoomCode()
+    const playerId = providedPlayerId || generatePlayerId()
+    const avatar = getRandomAvatar()
+
+    const player: PlayerState = {
+      id: playerId,
+      socketId: socket.id,
+      name: playerName,
+      avatar,
+      score: 0,
+      streak: 0,
+      isHost: true,
+      isConnected: true,
+    }
+
+    const room: GameRoom = {
+      code,
+      hostSocketId: socket.id,
+      players: new Map(),
+      status: 'WAITING',
+      settings,
+      currentQuestionIndex: -1,
+      questions: [],
+      answers: new Map(),
+      timer: null,
+      timeRemaining: 0,
+      disconnectTimers: new Map(),
+    }
+
+    room.players.set(playerId, player)
+    rooms.set(code, room)
+    socketToRoom.set(socket.id, code)
+    socketToPlayerId.set(socket.id, playerId)
+    socket.join(code)
+
+    // Generate questions upfront
+    room.questions = generateQuestions(settings.questionCount, settings.difficulty)
+
+    socket.emit('create-room', {
+      code,
+      playerId,
+      avatar,
+      state: serializeRoomState(room),
+    })
+
+    console.log(`[Room ${code}] Created by ${playerName}, settings: ${JSON.stringify(settings)}`)
+  })
+
+  // ----------------------------------------------------------
+  // join-room
+  // ----------------------------------------------------------
+  socket.on('join-room', (data: { code: string; playerName: string; playerId?: string }) => {
+    const { code, playerName, playerId: providedPlayerId } = data
+    const room = rooms.get(code.toUpperCase())
+
+    if (!room) {
+      socket.emit('error', { message: 'Room not found', code: 'ROOM_NOT_FOUND' })
+      return
+    }
+
+    if (room.status !== 'WAITING') {
+      socket.emit('error', { message: 'Game already in progress', code: 'GAME_IN_PROGRESS' })
+      return
+    }
+
+    const connectedCount = Array.from(room.players.values()).filter((p) => p.isConnected).length
+    if (connectedCount >= room.settings.maxPlayers) {
+      socket.emit('error', { message: 'Room is full', code: 'ROOM_FULL' })
+      return
+    }
+
+    // Check for duplicate name
+    const nameExists = Array.from(room.players.values()).some(
+      (p) => p.name.toLowerCase() === playerName.toLowerCase() && p.isConnected
+    )
+    if (nameExists) {
+      socket.emit('error', { message: 'Name already taken in this room', code: 'NAME_TAKEN' })
+      return
+    }
+
+    const playerId = providedPlayerId || generatePlayerId()
+    const avatar = getRandomAvatar()
+
+    const player: PlayerState = {
+      id: playerId,
+      socketId: socket.id,
+      name: playerName,
+      avatar,
+      score: 0,
+      streak: 0,
+      isHost: false,
+      isConnected: true,
+    }
+
+    room.players.set(playerId, player)
+    socketToRoom.set(socket.id, code.toUpperCase())
+    socketToPlayerId.set(socket.id, playerId)
+    socket.join(code.toUpperCase())
+
+    // Clear disconnect timer if rejoining
+    const disconnectTimer = room.disconnectTimers.get(playerId)
+    if (disconnectTimer) {
+      clearTimeout(disconnectTimer)
+      room.disconnectTimers.delete(playerId)
+    }
+
+    socket.emit('join-room', {
+      playerId,
+      avatar,
+      state: serializeRoomState(room),
+    })
+
+    socket.to(code.toUpperCase()).emit('player-joined', {
+      player: {
+        id: player.id,
+        name: player.name,
+        avatar: player.avatar,
+        score: player.score,
+        streak: player.streak,
+        isHost: player.isHost,
+        isConnected: true,
+      },
+      message: `${playerName} joined the room`,
+    })
+
+    console.log(`[Room ${code.toUpperCase()}] ${playerName} joined`)
+  })
+
+  // ----------------------------------------------------------
+  // leave-room
+  // ----------------------------------------------------------
+  socket.on('leave-room', () => {
+    const roomCode = socketToRoom.get(socket.id)
+    const playerId = socketToPlayerId.get(socket.id)
+
+    if (!roomCode || !playerId) return
+
+    const room = rooms.get(roomCode)
+    if (!room) return
+
+    const player = room.players.get(playerId)
+    if (!player) return
+
+    // Remove player
+    room.players.delete(playerId)
+    socket.leave(roomCode)
+    socketToRoom.delete(socket.id)
+    socketToPlayerId.delete(socket.id)
+
+    // Clear disconnect timer
+    const dt = room.disconnectTimers.get(playerId)
+    if (dt) {
+      clearTimeout(dt)
+      room.disconnectTimers.delete(playerId)
+    }
+
+    socket.to(roomCode).emit('player-left', {
+      player: {
+        id: player.id,
+        name: player.name,
+        avatar: player.avatar,
+        score: player.score,
+        streak: player.streak,
+        isHost: player.isHost,
+        isConnected: false,
+      },
+      message: `${player.name} left the room`,
+    })
+
+    // If host left, transfer
+    if (player.isHost) {
+      transferHost(room)
+    }
+
+    // If room is empty, clean up
+    if (room.players.size === 0) {
+      clearQuestionTimer(room)
+      rooms.delete(roomCode)
+      console.log(`[Room ${roomCode}] Deleted (empty)`)
+    }
+
+    console.log(`[Room ${roomCode}] ${player.name} left`)
+  })
+
+  // ----------------------------------------------------------
+  // room-state
+  // ----------------------------------------------------------
+  socket.on('room-state', () => {
+    const roomCode = socketToRoom.get(socket.id)
+    if (!roomCode) return
+
+    const room = rooms.get(roomCode)
+    if (!room) return
+
+    socket.emit('room-state', serializeRoomState(room))
+  })
+
+  // ----------------------------------------------------------
+  // start-game
+  // ----------------------------------------------------------
+  socket.on('start-game', async () => {
+    const roomCode = socketToRoom.get(socket.id)
+    const playerId = socketToPlayerId.get(socket.id)
+
+    if (!roomCode || !playerId) return
+
+    const room = rooms.get(roomCode)
+    if (!room) return
+
+    const player = room.players.get(playerId)
+    if (!player || !player.isHost) {
+      socket.emit('error', { message: 'Only the host can start the game', code: 'NOT_HOST' })
+      return
+    }
+
+    if (room.status !== 'WAITING') {
+      socket.emit('error', { message: 'Game already started', code: 'GAME_STARTED' })
+      return
+    }
+
+    const connectedPlayers = Array.from(room.players.values()).filter((p) => p.isConnected)
+    if (connectedPlayers.length < 1) {
+      socket.emit('error', { message: 'Need at least 1 player to start', code: 'NOT_ENOUGH_PLAYERS' })
+      return
+    }
+
+    // Mark as PLAYING first to prevent double-starts
+    room.status = 'PLAYING'
+    room.currentQuestionIndex = -1
+
+    // Reset all scores
+    room.players.forEach((p) => {
+      p.score = 0
+      p.streak = 0
+    })
+
+    // Generate AI questions by calling the API BEFORE notifying clients
+    try {
+      console.log(`[Room ${roomCode}] Generating AI questions for ${room.settings.category}/${room.settings.difficulty}/${room.settings.language}`)
+      const aiResponse = await fetch('http://localhost:3000/api/ai/generate-questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: room.settings.category,
+          difficulty: room.settings.difficulty,
+          language: room.settings.language,
+          count: room.settings.questionCount,
+          timePerQuestion: room.settings.timePerQuestion,
+        }),
+      })
+
+      if (aiResponse.ok) {
+        const aiData = await aiResponse.json() as { questions: Array<{
+          text: string
+          optionA: string
+          optionB: string
+          optionC: string
+          optionD: string
+          correctAnswer: string
+          explanation: string
+          category: string
+          difficulty: string
+        }> }
+        
+        if (aiData.questions && aiData.questions.length > 0) {
+          const answerMap: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 }
+          room.questions = aiData.questions.map((q, i) => ({
+            index: i,
+            text: q.text,
+            options: [q.optionA, q.optionB, q.optionC, q.optionD],
+            correctIndex: answerMap[q.correctAnswer.toUpperCase()] ?? 0,
+            category: q.category || room.settings.category,
+            difficulty: (q.difficulty || room.settings.difficulty) as Question['difficulty'],
+          }))
+          console.log(`[Room ${roomCode}] Generated ${room.questions.length} AI questions`)
+        } else {
+          room.questions = generateQuestions(room.settings.questionCount, room.settings.difficulty)
+          console.log(`[Room ${roomCode}] AI returned empty, using sample questions`)
+        }
+      } else {
+        room.questions = generateQuestions(room.settings.questionCount, room.settings.difficulty)
+        console.log(`[Room ${roomCode}] AI API failed, using sample questions`)
+      }
+    } catch (err) {
+      room.questions = generateQuestions(room.settings.questionCount, room.settings.difficulty)
+      console.log(`[Room ${roomCode}] AI error, using sample questions:`, err)
+    }
+
+    // Now notify clients that the game has started
+    io.to(roomCode).emit('start-game', {
+      state: serializeRoomState(room),
+    })
+
+    // Send first question
+    sendNextQuestion(room)
+
+    console.log(`[Room ${roomCode}] Game started with ${connectedPlayers.length} players`)
+  })
+
+  // ----------------------------------------------------------
+  // submit-answer
+  // ----------------------------------------------------------
+  socket.on('submit-answer', (data: { selectedIndex: number; responseTime: number }) => {
+    const { selectedIndex, responseTime } = data
+    const roomCode = socketToRoom.get(socket.id)
+    const playerId = socketToPlayerId.get(socket.id)
+
+    if (!roomCode || !playerId) return
+
+    const room = rooms.get(roomCode)
+    if (!room) return
+
+    if (room.status !== 'QUESTION') {
+      socket.emit('error', { message: 'Not in question phase', code: 'NOT_QUESTION_PHASE' })
+      return
+    }
+
+    const player = room.players.get(playerId)
+    if (!player || !player.isConnected) return
+
+    // Check if already answered
+    const currentAnswers = room.answers.get(String(room.currentQuestionIndex)) || []
+    if (currentAnswers.some((a) => a.playerId === playerId)) {
+      return // Already answered
+    }
+
+    const question = room.questions[room.currentQuestionIndex]
+    const isCorrect = selectedIndex === question.correctIndex
+    const pointsEarned = calculateScore(isCorrect, responseTime, room.settings.timePerQuestion, player.streak + (isCorrect ? 1 : 0))
+
+    const answer: PlayerAnswer = {
+      playerId,
+      selectedIndex,
+      responseTime,
+      isCorrect,
+      pointsEarned,
+    }
+
+    currentAnswers.push(answer)
+    room.answers.set(String(room.currentQuestionIndex), currentAnswers)
+
+    // Acknowledge to the player
+    socket.emit('answer-received', {
+      questionIndex: room.currentQuestionIndex,
+      selectedIndex,
+      isCorrect,
+      pointsEarned,
+    })
+
+    // Check if all connected players have answered
+    if (allConnectedPlayersAnswered(room)) {
+      clearQuestionTimer(room)
+      revealAnswer(room)
+    }
+  })
+
+  // ----------------------------------------------------------
+  // Disconnect
+  // ----------------------------------------------------------
+  socket.on('disconnect', (reason) => {
+    const roomCode = socketToRoom.get(socket.id)
+    const playerId = socketToPlayerId.get(socket.id)
+
+    console.log(`[Disconnect] ${socket.id} (${reason})`)
+
+    if (!roomCode || !playerId) return
+
+    const room = rooms.get(roomCode)
+    if (!room) return
+
+    const player = room.players.get(playerId)
+    if (!player) return
+
+    // Mark as disconnected
+    player.isConnected = false
+    player.socketId = ''
+
+    socketToRoom.delete(socket.id)
+    socketToPlayerId.delete(socket.id)
+
+    // Notify room
+    io.to(roomCode).emit('player-left', {
+      player: {
+        id: player.id,
+        name: player.name,
+        avatar: player.avatar,
+        score: player.score,
+        streak: player.streak,
+        isHost: player.isHost,
+        isConnected: false,
+      },
+      message: `${player.name} disconnected`,
+    })
+
+    // If host disconnected, transfer
+    if (player.isHost) {
+      transferHost(room)
+    }
+
+    // Set a 60s timer to remove the player completely
+    const disconnectTimer = setTimeout(() => {
+      const p = room.players.get(playerId)
+      if (p && !p.isConnected) {
+        room.players.delete(playerId)
+        room.disconnectTimers.delete(playerId)
+
+        // If room is empty, clean up
+        if (room.players.size === 0) {
+          clearQuestionTimer(room)
+          rooms.delete(roomCode)
+          console.log(`[Room ${roomCode}] Deleted (empty after disconnect timeout)`)
+        }
+      }
+    }, 60000)
+
+    room.disconnectTimers.set(playerId, disconnectTimer)
+
+    console.log(`[Room ${roomCode}] ${player.name} disconnected (60s removal timer started)`)
+  })
+
+  // ----------------------------------------------------------
+  // Error handler
+  // ----------------------------------------------------------
+  socket.on('error', (error) => {
+    console.error(`[Socket Error] ${socket.id}:`, error)
+  })
+})
+
+// ============================================================
+// Start Server
+// ============================================================
+
+const PORT = 3003
+httpServer.listen(PORT, () => {
+  console.log(`[Quiz Service] Socket.io server running on port ${PORT}`)
+  console.log(`[Quiz Service] Path: /`)
+  console.log(`[Quiz Service] CORS: *`)
+})
+
+// ============================================================
+// Graceful Shutdown
+// ============================================================
+
+process.on('SIGTERM', () => {
+  console.log('[Quiz Service] Received SIGTERM, shutting down...')
+  // Clear all timers
+  rooms.forEach((room) => {
+    clearQuestionTimer(room)
+    room.disconnectTimers.forEach((timer) => clearTimeout(timer))
+  })
+  httpServer.close(() => {
+    console.log('[Quiz Service] Server closed')
+    process.exit(0)
+  })
+})
+
+process.on('SIGINT', () => {
+  console.log('[Quiz Service] Received SIGINT, shutting down...')
+  rooms.forEach((room) => {
+    clearQuestionTimer(room)
+    room.disconnectTimers.forEach((timer) => clearTimeout(timer))
+  })
+  httpServer.close(() => {
+    console.log('[Quiz Service] Server closed')
+    process.exit(0)
+  })
+})
+
+
+=== src/app/api/game/create/route.ts ===
+import { NextRequest, NextResponse } from 'next/server'
+import { db } from '@/lib/db'
+import { generateGameCode, VALID_CATEGORIES, VALID_DIFFICULTIES } from '@/lib/game-utils'
+
+const AVATARS = ['🎮','🎲','🎯','🏆','⚡','🔥','🌟','💎','🚀','🎪','🦊','🐱','🐶','🦁','🐻','🐼','🦄','🐲','🦅','🐬','🎭','🎨','🎵','🎸','🌸','🍀','🌈','⭐','🧠','💪','🤖','👾','🧙','🧛','🦸','🥷','👽','🤠','😈','💀']
+
+function randomAvatar(): string {
+  return AVATARS[Math.floor(Math.random() * AVATARS.length)]
+}
+
+interface CreateGameBody {
+  hostName: string
+  settings?: {
+    category: string
+    difficulty: string
+    language: string
+    maxPlayers: number
+    questionCount: number
+    timePerQuestion: number
+  }
+  // Also accept flat format for backward compat
+  category?: string
+  difficulty?: string
+  language?: string
+  maxPlayers?: number
+  questionCount?: number
+  timePerQuestion?: number
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body: CreateGameBody = await request.json()
+    const { hostName } = body
+
+    // Support both nested settings and flat format
+    const category = body.settings?.category ?? body.category
+    const difficulty = body.settings?.difficulty ?? body.difficulty
+    const language = body.settings?.language ?? body.language
+    const maxPlayers = body.settings?.maxPlayers ?? body.maxPlayers
+    const questionCount = body.settings?.questionCount ?? body.questionCount
+    const timePerQuestion = body.settings?.timePerQuestion ?? body.timePerQuestion
+
+    // Validate required fields
+    if (!hostName || typeof hostName !== 'string' || hostName.trim().length === 0) {
+      return NextResponse.json({ error: 'hostName is required' }, { status: 400 })
+    }
+
+    if (!category || !VALID_CATEGORIES.includes(category)) {
+      return NextResponse.json(
+        { error: `category must be one of: ${VALID_CATEGORIES.join(', ')}` },
+        { status: 400 }
+      )
+    }
+
+    if (!difficulty || !VALID_DIFFICULTIES.includes(difficulty)) {
+      return NextResponse.json(
+        { error: `difficulty must be one of: ${VALID_DIFFICULTIES.join(', ')}` },
+        { status: 400 }
+      )
+    }
+
+    if (!language || typeof language !== 'string') {
+      return NextResponse.json({ error: 'language is required' }, { status: 400 })
+    }
+
+    const parsedMaxPlayers = Number(maxPlayers)
+    if (isNaN(parsedMaxPlayers) || parsedMaxPlayers < 2 || parsedMaxPlayers > 20) {
+      return NextResponse.json({ error: 'maxPlayers must be between 2 and 20' }, { status: 400 })
+    }
+
+    const parsedQuestionCount = Number(questionCount)
+    if (isNaN(parsedQuestionCount) || parsedQuestionCount < 3 || parsedQuestionCount > 50) {
+      return NextResponse.json({ error: 'questionCount must be between 3 and 50' }, { status: 400 })
+    }
+
+    const parsedTimePerQuestion = Number(timePerQuestion)
+    if (isNaN(parsedTimePerQuestion) || parsedTimePerQuestion < 5 || parsedTimePerQuestion > 120) {
+      return NextResponse.json({ error: 'timePerQuestion must be between 5 and 120 seconds' }, { status: 400 })
+    }
+
+    // Generate unique game code (with retry to handle collisions)
+    let gameCode = ''
+    let attempts = 0
+    const maxAttempts = 10
+
+    while (attempts < maxAttempts) {
+      const candidate = generateGameCode()
+      const existing = await db.game.findUnique({ where: { code: candidate } })
+      if (!existing) {
+        gameCode = candidate
+        break
+      }
+      attempts++
+    }
+
+    if (!gameCode) {
+      return NextResponse.json({ error: 'Failed to generate unique game code' }, { status: 500 })
+    }
+
+    const hostAvatar = randomAvatar()
+
+    // Create game with host player
+    const game = await db.game.create({
+      data: {
+        code: gameCode,
+        status: 'WAITING',
+        category,
+        difficulty,
+        language,
+        maxPlayers: parsedMaxPlayers,
+        questionCount: parsedQuestionCount,
+        timePerQuestion: parsedTimePerQuestion,
+        currentQuestionIndex: 0,
+        players: {
+          create: {
+            name: hostName.trim(),
+            avatar: hostAvatar,
+            isHost: true,
+            isConnected: false,
+          },
+        },
+      },
+      include: {
+        players: true,
+      },
+    })
+
+    const hostPlayer = game.players[0]
+
+    return NextResponse.json({
+      gameCode: game.code,
+      gameId: game.id,
+      playerId: hostPlayer.id,
+      avatar: hostPlayer.avatar,
+      players: game.players.map(p => ({
+        id: p.id,
+        name: p.name,
+        avatar: p.avatar,
+        score: p.score,
+        streak: p.streak,
+        isHost: p.isHost,
+        isConnected: p.isConnected,
+      })),
+    }, { status: 201 })
+  } catch (error) {
+    console.error('[Game Create] Error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+
+=== src/app/api/game/[code]/join/route.ts ===
+Traceback (most recent call last):
+  File "<string>", line 3, in <module>
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/__init__.py", line 293, in load
+    return loads(fp.read(),
+           ^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/decoder.py", line 338, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/decoder.py", line 356, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+=== src/app/api/game/[code]/start/route.ts ===
+Traceback (most recent call last):
+  File "<string>", line 3, in <module>
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/__init__.py", line 293, in load
+    return loads(fp.read(),
+           ^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/decoder.py", line 338, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/decoder.py", line 356, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+=== src/app/api/game/[code]/route.ts ===
+Traceback (most recent call last):
+  File "<string>", line 3, in <module>
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/__init__.py", line 293, in load
+    return loads(fp.read(),
+           ^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/decoder.py", line 338, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/decoder.py", line 356, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+=== src/app/api/game/[code]/finish/route.ts ===
+Traceback (most recent call last):
+  File "<string>", line 3, in <module>
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/__init__.py", line 293, in load
+    return loads(fp.read(),
+           ^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/decoder.py", line 338, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/z/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/json/decoder.py", line 356, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+=== src/app/api/ai/generate-questions/route.ts ===
+import { NextRequest, NextResponse } from 'next/server'
+import { db } from '@/lib/db'
+import { CATEGORY_LABELS, VALID_CATEGORIES, VALID_DIFFICULTIES } from '@/lib/game-utils'
+
+// ============================================================
+// Types
+// ============================================================
+
+interface GenerateQuestionsBody {
+  category: string
+  difficulty: string
+  language: string
+  count: number
+  timePerQuestion: number
+  gameId?: string
+}
+
+interface GeneratedQuestion {
+  text: string
+  optionA: string
+  optionB: string
+  optionC: string
+  optionD: string
+  correctAnswer: string
+  explanation: string
+  category: string
+  difficulty: string
+}
+
+// ============================================================
+// Fallback sample questions
+// ============================================================
+
+const FALLBACK_QUESTIONS: GeneratedQuestion[] = [
+  {
+    text: "What is the chemical symbol for water?",
+    optionA: "H2O",
+    optionB: "CO2",
+    optionC: "NaCl",
+    optionD: "O2",
+    correctAnswer: "A",
+    explanation: "Water is composed of two hydrogen atoms and one oxygen atom, represented as H2O.",
+    category: "science",
+    difficulty: "EASY",
+  },
+  {
+    text: "Which planet is known as the Red Planet?",
+    optionA: "Venus",
+    optionB: "Mars",
+    optionC: "Jupiter",
+    optionD: "Saturn",
+    correctAnswer: "B",
+    explanation: "Mars appears red due to iron oxide (rust) on its surface.",
+    category: "science",
+    difficulty: "EASY",
+  },
+  {
+    text: "In what year did World War II end?",
+    optionA: "1943",
+    optionB: "1944",
+    optionC: "1945",
+    optionD: "1946",
+    correctAnswer: "C",
+    explanation: "World War II ended in 1945 with the surrender of Germany in May and Japan in September.",
+    category: "history",
+    difficulty: "EASY",
+  },
+  {
+    text: "What is the largest ocean on Earth?",
+    optionA: "Atlantic Ocean",
+    optionB: "Indian Ocean",
+    optionC: "Arctic Ocean",
+    optionD: "Pacific Ocean",
+    correctAnswer: "D",
+    explanation: "The Pacific Ocean is the largest and deepest ocean, covering more than 63 million square miles.",
+    category: "geography",
+    difficulty: "EASY",
+  },
+  {
+    text: "Who painted the Mona Lisa?",
+    optionA: "Michelangelo",
+    optionB: "Leonardo da Vinci",
+    optionC: "Raphael",
+    optionD: "Donatello",
+    correctAnswer: "B",
+    explanation: "Leonardo da Vinci painted the Mona Lisa between 1503 and 1519.",
+    category: "art",
+    difficulty: "EASY",
+  },
+  {
+    text: "Which element has the atomic number 79?",
+    optionA: "Silver",
+    optionB: "Platinum",
+    optionC: "Gold",
+    optionD: "Copper",
+    correctAnswer: "C",
+    explanation: "Gold (Au) has the atomic number 79 on the periodic table.",
+    category: "science",
+    difficulty: "MEDIUM",
+  },
+  {
+    text: "What is the capital of Australia?",
+    optionA: "Sydney",
+    optionB: "Melbourne",
+    optionC: "Canberra",
+    optionD: "Brisbane",
+    correctAnswer: "C",
+    explanation: "Canberra is the capital city of Australia, not Sydney as many assume.",
+    category: "geography",
+    difficulty: "MEDIUM",
+  },
+  {
+    text: "Which composer wrote the 'Moonlight Sonata'?",
+    optionA: "Mozart",
+    optionB: "Beethoven",
+    optionC: "Bach",
+    optionD: "Chopin",
+    correctAnswer: "B",
+    explanation: "Ludwig van Beethoven composed the Moonlight Sonata in 1801.",
+    category: "music",
+    difficulty: "MEDIUM",
+  },
+  {
+    text: "What programming language was created by Brendan Eich in 1995?",
+    optionA: "Python",
+    optionB: "Java",
+    optionC: "JavaScript",
+    optionD: "C++",
+    correctAnswer: "C",
+    explanation: "Brendan Eich created JavaScript in just 10 days while working at Netscape.",
+    category: "technology",
+    difficulty: "MEDIUM",
+  },
+  {
+    text: "Which novel begins with 'Call me Ishmael'?",
+    optionA: "The Great Gatsby",
+    optionB: "Moby-Dick",
+    optionC: "1984",
+    optionD: "Pride and Prejudice",
+    correctAnswer: "B",
+    explanation: "Moby-Dick by Herman Melville opens with one of the most famous lines in literature.",
+    category: "literature",
+    difficulty: "MEDIUM",
+  },
+]
+
+// ============================================================
+// AI question generation via z-ai-web-dev-sdk
+// ============================================================
+
+async function generateQuestionsWithAI(
+  category: string,
+  difficulty: string,
+  language: string,
+  count: number
+): Promise<GeneratedQuestion[]> {
+  const ZAI = (await import('z-ai-web-dev-sdk')).default
+  const zai = await ZAI.create()
+
+  const categoryLabel = CATEGORY_LABELS[category] || category
+  const difficultyLabel = difficulty === 'MIXED' ? 'mixed (a mix of easy, medium, and hard)' : difficulty
+
+  const systemPrompt = `You are a quiz question generator for a multiplayer party game. Generate exactly ${count} multiple-choice questions about ${categoryLabel} at ${difficultyLabel} difficulty level in ${language} language.
+
+IMPORTANT: You MUST respond with ONLY a valid JSON array. No markdown, no code blocks, no extra text, no explanation outside the JSON.
+
+Each question must follow this exact format:
+{
+  "text": "The question text",
+  "optionA": "First option",
+  "optionB": "Second option",
+  "optionC": "Third option",
+  "optionD": "Fourth option",
+  "correctAnswer": "A",
+  "explanation": "Brief explanation of the correct answer",
+  "category": "${category}",
+  "difficulty": "${difficulty === 'MIXED' ? 'MEDIUM' : difficulty}"
+}
+
+Rules:
+- The correctAnswer must be exactly one of: "A", "B", "C", or "D"
+- Only one option should be correct
+- Make questions interesting, accurate, and fun for a party game
+- Explanations should be concise (1-2 sentences)
+- Do not repeat questions
+- Ensure all 4 options are plausible but only one is correct
+- The output must be a valid JSON array with no surrounding text`
+
+  const userPrompt = `Generate ${count} quiz questions about ${categoryLabel} in ${language} language at ${difficultyLabel} difficulty. Remember: output ONLY the JSON array, nothing else.`
+
+  const completion = await zai.chat.completions.create({
+    messages: [
+      { role: 'assistant', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    thinking: { type: 'disabled' },
+  })
+
+  const content = completion.choices[0]?.message?.content
+  if (!content) {
+    throw new Error('AI returned empty content')
+  }
+
+  return parseAIResponse(content, category, difficulty)
+}
+
+// ============================================================
+// Parse AI response with robust JSON extraction
+// ============================================================
+
+function parseAIResponse(
+  content: string,
+  category: string,
+  difficulty: string
+): GeneratedQuestion[] {
+  let jsonStr = content.trim()
+
+  // Remove markdown code block wrapping if present
+  const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (codeBlockMatch) {
+    jsonStr = codeBlockMatch[1].trim()
+  }
+
+  // Try to find JSON array in the response
+  const arrayMatch = jsonStr.match(/\[[\s\S]*\]/)
+  if (arrayMatch) {
+    jsonStr = arrayMatch[0]
+  }
+
+  try {
+    const parsed = JSON.parse(jsonStr)
+
+    if (!Array.isArray(parsed)) {
+      throw new Error('AI response is not an array')
+    }
+
+    // Validate and normalize each question
+    const questions: GeneratedQuestion[] = parsed.map((q: Record<string, unknown>, index: number) => {
+      if (!q.text || !q.optionA || !q.optionB || !q.optionC || !q.optionD || !q.correctAnswer) {
+        throw new Error(`Question at index ${index} is missing required fields`)
+      }
+
+      const validAnswers = ['A', 'B', 'C', 'D']
+      const answer = String(q.correctAnswer).toUpperCase()
+      if (!validAnswers.includes(answer)) {
+        throw new Error(`Question at index ${index} has invalid correctAnswer: ${q.correctAnswer}`)
+      }
+
+      return {
+        text: String(q.text),
+        optionA: String(q.optionA),
+        optionB: String(q.optionB),
+        optionC: String(q.optionC),
+        optionD: String(q.optionD),
+        correctAnswer: answer,
+        explanation: q.explanation ? String(q.explanation) : 'No explanation provided.',
+        category: String(q.category || category),
+        difficulty: String(q.difficulty || difficulty),
+      }
+    })
+
+    return questions
+  } catch (parseError) {
+    console.error('[AI Generate] JSON parse error:', parseError)
+    throw new Error(`Failed to parse AI response as JSON: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`)
+  }
+}
+
+// ============================================================
+// Main route handler
+// ============================================================
+
+export async function POST(request: NextRequest) {
+  try {
+    const body: GenerateQuestionsBody = await request.json()
+    const { category, difficulty, language, count, timePerQuestion, gameId } = body
+
+    // Validate
+    if (!category || !VALID_CATEGORIES.includes(category)) {
+      return NextResponse.json(
+        { error: `category must be one of: ${VALID_CATEGORIES.join(', ')}` },
+        { status: 400 }
+      )
+    }
+
+    if (!difficulty || !VALID_DIFFICULTIES.includes(difficulty)) {
+      return NextResponse.json(
+        { error: `difficulty must be one of: ${VALID_DIFFICULTIES.join(', ')}` },
+        { status: 400 }
+      )
+    }
+
+    if (!language || typeof language !== 'string') {
+      return NextResponse.json({ error: 'language is required' }, { status: 400 })
+    }
+
+    const parsedCount = Number(count)
+    if (isNaN(parsedCount) || parsedCount < 1 || parsedCount > 50) {
+      return NextResponse.json({ error: 'count must be between 1 and 50' }, { status: 400 })
+    }
+
+    const parsedTimePerQuestion = Number(timePerQuestion) || 30
+
+    // Try AI generation with retries
+    let questions: GeneratedQuestion[] = []
+    let usedAI = false
+    const maxRetries = 2
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`[AI Generate] Attempt ${attempt + 1} for ${category}/${difficulty}/${language}`)
+        questions = await generateQuestionsWithAI(category, difficulty, language, parsedCount)
+        usedAI = true
+        break
+      } catch (aiError) {
+        console.error(`[AI Generate] Attempt ${attempt + 1} failed:`, aiError)
+        if (attempt === maxRetries) {
+          console.warn('[AI Generate] All attempts failed, using fallback questions')
+        }
+      }
+    }
+
+    // Fallback to sample questions if AI fails
+    if (!usedAI || questions.length === 0) {
+      questions = FALLBACK_QUESTIONS.slice(0, parsedCount)
+      // Adjust category/difficulty for fallback questions
+      questions = questions.map((q) => ({
+        ...q,
+        category,
+        difficulty: difficulty === 'MIXED' ? q.difficulty : difficulty,
+      }))
+    }
+
+    // Ensure we have exactly the requested count
+    if (questions.length > parsedCount) {
+      questions = questions.slice(0, parsedCount)
+    }
+
+    // Save questions to DB if gameId is provided
+    if (gameId) {
+      const questionRecords = questions.map((q, index) => ({
+        text: q.text,
+        optionA: q.optionA,
+        optionB: q.optionB,
+        optionC: q.optionC,
+        optionD: q.optionD,
+        correctAnswer: q.correctAnswer,
+        explanation: q.explanation,
+        order: index,
+        timeLimit: parsedTimePerQuestion,
+        gameId,
+      }))
+
+      await db.question.createMany({ data: questionRecords })
+    }
+
+    return NextResponse.json({
+      questions,
+      generatedBy: usedAI ? 'ai' : 'fallback',
+      count: questions.length,
+    })
+  } catch (error) {
+    console.error('[AI Generate] Fatal error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+
+=== src/app/api/leaderboard/route.ts ===
+import { NextRequest, NextResponse } from 'next/server'
+import { db } from '@/lib/db'
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 10, 1), 100)
+    const offset = Math.max(Number(searchParams.get('offset')) || 0, 0)
+
+    // Get top players from completed games, aggregated by name
+    // We group by player name across all finished games
+    const players = await db.player.findMany({
+      where: {
+        game: {
+          status: 'FINISHED',
+        },
+      },
+      select: {
+        name: true,
+        score: true,
+        streak: true,
+        isHost: true,
+        game: {
+          select: {
+            code: true,
+            category: true,
+            difficulty: true,
+          },
+        },
+      },
+      orderBy: { score: 'desc' },
+    })
+
+    // Aggregate scores by player name
+    const playerMap = new Map<string, {
+      name: string
+      totalScore: number
+      bestScore: number
+      maxStreak: number
+      gamesPlayed: number
+      gamesHosted: number
+    }>()
+
+    for (const p of players) {
+      const existing = playerMap.get(p.name)
+      if (existing) {
+        existing.totalScore += p.score
+        existing.bestScore = Math.max(existing.bestScore, p.score)
+        existing.maxStreak = Math.max(existing.maxStreak, p.streak)
+        existing.gamesPlayed += 1
+        if (p.isHost) existing.gamesHosted += 1
+      } else {
+        playerMap.set(p.name, {
+          name: p.name,
+          totalScore: p.score,
+          bestScore: p.score,
+          maxStreak: p.streak,
+          gamesPlayed: 1,
+          gamesHosted: p.isHost ? 1 : 0,
+        })
+      }
+    }
+
+    // Sort by totalScore descending
+    const leaderboard = Array.from(playerMap.values())
+      .sort((a, b) => b.totalScore - a.totalScore)
+      .slice(offset, offset + limit)
+
+    const total = playerMap.size
+
+    return NextResponse.json({
+      leaderboard,
+      total,
+      limit,
+      offset,
+    })
+  } catch (error) {
+    console.error('[Leaderboard] Error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}

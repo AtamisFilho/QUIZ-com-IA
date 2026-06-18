@@ -1,0 +1,802 @@
+     1→     1→=== src/components/quiz/QuizPlayScreen.tsx ===
+     2→     2→'use client'
+     3→     3→
+     4→     4→import { useCallback, useEffect, useRef, useState } from 'react'
+     5→     5→import { useTranslation } from '@/lib/i18n'
+     6→     6→import { useGameStore } from '@/lib/game-store'
+     7→     7→import { motion, AnimatePresence } from 'framer-motion'
+     8→     8→import { Clock, CheckCircle2, XCircle, Flame, Zap } from 'lucide-react'
+     9→     9→import { Button } from '@/components/ui/button'
+    10→    10→import { Progress } from '@/components/ui/progress'
+    11→    11→import { Badge } from '@/components/ui/badge'
+    12→    12→
+    13→    13→const OPTION_COLORS = [
+    14→    14→  { bg: 'bg-emerald-500', hover: 'hover:bg-emerald-600', text: 'text-white', border: 'border-emerald-500', lightBg: 'bg-emerald-50 dark:bg-emerald-950/30', lightText: 'text-emerald-700 dark:text-emerald-400' },
+    15→    15→  { bg: 'bg-amber-500', hover: 'hover:bg-amber-600', text: 'text-white', border: 'border-amber-500', lightBg: 'bg-amber-50 dark:bg-amber-950/30', lightText: 'text-amber-700 dark:text-amber-400' },
+    16→    16→  { bg: 'bg-rose-500', hover: 'hover:bg-rose-600', text: 'text-white', border: 'border-rose-500', lightBg: 'bg-rose-50 dark:bg-rose-950/30', lightText: 'text-rose-700 dark:text-rose-400' },
+    17→    17→  { bg: 'bg-violet-500', hover: 'hover:bg-violet-600', text: 'text-white', border: 'border-violet-500', lightBg: 'bg-violet-50 dark:bg-violet-950/30', lightText: 'text-violet-700 dark:text-violet-400' },
+    18→    18→]
+    19→    19→
+    20→    20→const OPTION_LETTERS = ['A', 'B', 'C', 'D']
+    21→    21→
+    22→    22→export default function QuizPlayScreen() {
+    23→    23→  const { t } = useTranslation()
+    24→    24→  const {
+    25→    25→    currentQuestion,
+    26→    26→    currentQuestionIndex,
+    27→    27→    totalQuestions,
+    28→    28→    timeRemaining,
+    29→    29→    selectedOption,
+    30→    30→    hasSubmittedAnswer,
+    31→    31→    answerResult,
+    32→    32→    showResult,
+    33→    33→    players,
+    34→    34→    playerId,
+    35→    35→    setHasSubmittedAnswer,
+    36→    36→    setSelectedOption,
+    37→    37→  } = useGameStore()
+    38→    38→
+    39→    39→  const [questionStartTime, setQuestionStartTime] = useState<number>(Date.now())
+    40→    40→  const optionRefs = useRef<(HTMLButtonElement | null)[]>([])
+    41→    41→  const [nextCountdown, setNextCountdown] = useState<number | null>(null)
+    42→    42→
+    43→    43→  // Track question start time
+    44→    44→  useEffect(() => {
+    45→    45→    if (currentQuestion && !showResult) {
+    46→    46→      setQuestionStartTime(Date.now())
+    47→    47→    }
+    48→    48→  }, [currentQuestion, showResult])
+    49→    49→
+    50→    50→  // Next question countdown when answer is revealed
+    51→    51→  useEffect(() => {
+    52→    52→    if (showResult) {
+    53→    53→      setNextCountdown(3)
+    54→    54→      const interval = setInterval(() => {
+    55→    55→        setNextCountdown((prev) => {
+    56→    56→          if (prev === null || prev <= 1) {
+    57→    57→            clearInterval(interval)
+    58→    58→            return null
+    59→    59→          }
+    60→    60→          return prev - 1
+    61→    61→        })
+    62→    62→      }, 1000)
+    63→    63→      return () => clearInterval(interval)
+    64→    64→    }
+    65→    65→  }, [showResult])
+    66→    66→
+    67→    67→  // Keyboard shortcuts for options (1-4, A-D)
+    68→    68→  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    69→    69→    if (hasSubmittedAnswer || showResult) return
+    70→    70→
+    71→    71→    let optionIndex: number | null = null
+    72→    72→    if (e.key >= '1' && e.key <= '4') {
+    73→    73→      optionIndex = parseInt(e.key) - 1
+    74→    74→    } else if (e.key.toLowerCase() >= 'a' && e.key.toLowerCase() <= 'd') {
+    75→    75→      optionIndex = e.key.toLowerCase().charCodeAt(0) - 97
+    76→    76→    }
+    77→    77→
+    78→    78→    if (optionIndex !== null && optionIndex >= 0 && optionIndex < 4) {
+    79→    79→      setSelectedOption(optionIndex)
+    80→    80→    }
+    81→    81→
+    82→    82→    // Enter to submit
+    83→    83→    if (e.key === 'Enter' && selectedOption !== null && !hasSubmittedAnswer) {
+    84→    84→      handleSubmitAnswer()
+    85→    85→    }
+    86→    86→  }, asSubmittedAnswer, showResult, selectedOption])
+    87→    87→
+    88→    88→  useEffect(() => {
+    89→    89→    window.addEventListener('keydown', handleKeyDown)
+    90→    90→    return () => window.removeEventListener('keydown', handleKeyDown)
+    91→    91→  }, andleKeyDown])
+    92→    92→
+    93→    93→  // Focus management when question changes
+    94→    94→  useEffect(() => {
+    95→    95→    if (currentQuestion && !showResult) {
+    96→    96→      optionRefs.current[0]?.focus()
+    97→    97→    }
+    98→    98→  }, [currentQuestion, showResult])
+    99→    99→
+   100→   100→  const handleSubmitAnswer = useCallback(() => {
+   101→   101→    if (selectedOption === null || hasSubmittedAnswer || !currentQuestion) return
+   102→   102→
+   103→   103→    setHasSubmittedAnswer(true)
+   104→   104→    const responseTime = Date.now() - questionStartTime
+   105→   105→
+   106→   106→    if (typeof window !== 'undefined') {
+   107→   107→      window.dispatchEvent(
+   108→   108→        new CustomEvent('quiz-submit-answer', {
+   109→   109→          detail: {
+   110→   110→            selectedIndex: selectedOption,
+   111→   111→            responseTime,
+   112→   112→          },
+   113→   113→        })
+   114→   114→      )
+   115→   115→    }
+   116→   116→  }, [selectedOption, hasSubmittedAnswer, currentQuestion, questionStartTime, setHasSubmittedAnswer])
+   117→   117→
+   118→   118→  if (!currentQuestion) {
+   119→   119→    return (
+   120→   120→      <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center">
+   121→   121→        <div className="text-center space-y-4">
+   122→   122→          <div className="w-12 h-12 border-4 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto" />
+   123→   123→          <p className="text-muted-foreground">{t('common.loading')}</p>
+   124→   124→        </div>
+   125→   125→      </div>
+   126→   126→    )
+   127→   127→  }
+   128→   128→
+   129→   129→  const timePerQuestion = useGameStore.getState().gameSettings?.timePerQuestion || 20
+   130→   130→  const timerPercent = (timeRemaining / timePerQuestion) * 100
+   131→   131→  const isTimeLow = timeRemaining <= 5
+   132→   132→
+   133→   133→  // Find current player's score for mini-leaderboard
+   134→   134→  const sortedPlayers = [...players].sort((a, b) => b.score - a.score)
+   135→   135→  const currentPlayer = players.find((p) => p.id === playerId)
+   136→   136→
+   137→   137→  return (
+   138→   138→    <div className="min-h-[calc(100vh-3.5rem)] flex flex-col px-4 py-4 sm:py-6 max-w-4xl mx-auto">
+   139→   139→      {/* Top bar: Question counter + Timer + Mini-leaderboard */}
+   140→   140→      <div className="flex items-center justify-between mb-4 gap-3">
+   141→   141→        <Badge variant="outline" className="text-sm px-3 py-1">
+   142→   142→          {t('quiz.question', { current: String(currentQuestionIndex + 1), total: String(totalQuestions) })}
+   143→   143→        </Badge>
+   144→   144→
+   145→   145→        {/* Timer */}
+   146→   146→        <div className="flex items-center gap-2">
+   147→   147→          <Clock className={`w-4 h-4 ${isTimeLow ? 'text-red-500 animate-pulse' : 'text-muted-foreground'}`} />
+   148→   148→          <div className="w-24 sm:w-32">
+   149→   149→            <Progress
+   150→   150→              value={timerPercent}
+   151→   151→              className={`h-2 ${isTimeLow ? '[&>div]:bg-red-500' : '[&>div]:bg-purple-500'}`}
+   152→   152→            />
+   153→   153→          </div>
+   154→   154→          <span className={`text-sm font-mono font-bold min-w-[2ch] ${
+   155→   155→            isTimeLow ? 'text-red-500 animate-pulse' : 'text-muted-foreground'
+   156→   156→          }`}>
+   157→   157→            {timeRemaining}
+   158→   158→          </span>
+   159→   159→        </div>
+   160→   160→
+   161→   161→        {/* Current score */}
+   162→   162→        {currentPlayer && (
+   163→   163→          <Badge className="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border-0">
+   164→   164→            <Zap className="w-3 h-3 mr-1" />
+   165→   165→            {currentPlayer.score}
+   166→   166→          </Badge>
+   167→   167→        )}
+   168→   168→      </div>
+   169→   169→
+   170→   170→      {/* Category badge */}
+   171→   171→      {currentQuestion.category && (
+   172→   172→        <div className="flex justify-center mb-3">
+   173→   173→          <Badge variant="secondary" className="text-xs capitalize">
+   174→   174→            {currentQuestion.category}
+   175→   175→          </Badge>
+   176→   176→        </div>
+   177→   177→      )}
+   178→   178→
+   179→   179→      {/* Question Text */}
+   180→   180→      <motion.div
+   181→   181→        key={`question-${currentQuestionIndex}`}
+   182→   182→        initial={{ opacity: 0, y: 20 }}
+   183→   183→        animate={{ opacity: 1, y: 0 }}
+   184→   184→        transition={{ duration: 0.4 }}
+   185→   185→        className="flex-1 flex flex-col"
+   186→   186→      >
+   187→   187→        <div className="text-center mb-6 sm:mb-8">
+   188→   188→          <h2 className="text-xl sm:text-2xl md:text-3xl font-bold leading-tight px-2">
+   189→   189→            {currentQuestion.text}
+   190→   190→          </h2>
+   191→   191→        </div>
+   192→   192→
+   193→   193→        {/* Options */}
+   194→   194→        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6">
+   195→   195→          <AnimatePresence mode="wait">
+   196→   196→            {currentQuestion.options.map((option, index) => {
+   197→   197→              const color = OPTION_COLORS[index]
+   198→   198→              const isSelected = selectedOption === index
+   199→   199→              const isCorrectOption = showResult && answerResult && index === answerResult.correctIndex
+   200→   200→              const isWrongSelection = showResult && answerResult && isSelected && !answerResult.isCorrect
+   201→   201→
+   202→   202→              let buttonClass = ''
+   203→   203→              if (showResult) {
+   204→   204→                if (isCorrectOption) {
+   205→   205→                  buttonClass = `${color.bg} ${color.text} ring-2 ring-emerald-400 shadow-lg`
+   206→   206→                } else if (isWrongSelection) {
+   207→   207→                  buttonClass = 'bg-red-500 text-white ring-2 ring-red-400 shadow-lg opacity-80'
+   208→   208→                } else {
+   209→   209→                  buttonClass = 'bg-muted text-muted-foreground opacity-50'
+   210→   210→                }
+   211→   211→              } else if (isSelected) {
+   212→   212→                buttonClass = `${color.bg} ${color.text} ring-2 ring-offset-2 ring-purple-500 shadow-md`
+   213→   213→              } else {
+   214→   214→                buttonClass = `${color.lightBg} ${color.lightText} border-2 border-transparent hover:border-purple-300 dark:hover:border-purple-700`
+   215→   215→              }
+   216→   216→
+   217→   217→              return (
+   218→   218→                <motion.button
+   219→   219→                  key={index}
+   220→   220→                  ref={(el) => { optionRefs.current[index] = el }}
+   221→   221→                  initial={{ opacity: 0, x: index % 2 === 0 ? -20 : 20 }}
+   222→   222→                  animate={{ opacity: 1, x: 0 }}
+   223→   223→                  transition={{ duration: 0.3, delay: index * 0.08 }}
+   224→   224→                  onClick={() => !hasSubmittedAnswer && !showResult && setSelectedOption(index)}
+   225→   225→                  disabled={hasSubmittedAnswer || showResult}
+   226→   226→                  className={`relative flex items-center gap-3 p-4 sm:p-5 rounded-xl text-left font-medium transition-all duration-200 min-h-[56px] ${buttonClass}`}
+   227→   227→                  aria-label={`Option ${OPTION_LETTERS[index]}: ${option}`}
+   228→   228→                  aria-pressed={isSelected}
+   229→   229→                >
+   230→   230→                  <span className={`flex items-center justify-center w-8 h-8 rounded-lg text-sm font-bold shrink-0 ${
+   231→   231→                    showResult && isCorrectOption
+   232→   232→                      ? 'bg-white/20'
+   233→   233→                      : isSelected && !showResult
+   234→   234→                        ? 'bg-white/20'
+   235→   235→                        : 'bg-black/10 dark:bg-white/10'
+   236→   236→                  }`}>
+   237→   237→                    {OPTION_LETTERS[index]}
+   238→   238→                  </span>
+   239→   239→                  <span className="text-sm sm:text-base">{option}</span>
+   240→   240→                  {showResult && isCorrectOption && (
+   241→   241→                    <CheckCircle2 className="w-5 h-5 ml-auto shrink-0" />
+   242→   242→                  )}
+   243→   243→                  {isWrongSelection && (
+   244→   244→                    <XCircle className="w-5 h-5 ml-auto shrink-0" />
+   245→   245→                  )}
+   246→   246→                </motion.button>
+   247→   247→              )
+   248→   248→            })}
+   249→   249→          </AnimatePresence>
+   250→   250→        </div>
+   251→   251→
+   252→   252→        {/* Submit Button */}
+   253→   253→        {!showResult && (
+   254→   254→          <motion.div
+   255→   255→            initial={{ opacity: 0 }}
+   256→   256→            animate={{ opacity: 1 }}
+   257→   257→            className="flex justify-center"
+   258→   258→          >
+   259→   259→            <Button
+   260→   260→              onClick={handleSubmitAnswer}
+   261→   261→              disabled={selectedOption === null || hasSubmittedAnswer}
+   262→   262→              size="lg"
+   263→   263→              className="px-10 h-12 text-lg bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 shadow-lg shadow-purple-500/25 disabled:opacity-50"
+   264→   264→              aria-label={t('quiz.submitAnswer')}
+   265→   265→            >
+   266→   266→              {hasSubmittedAnswer ? t('quiz.waitingForOthers') : t('quiz.submitAnswer')}
+   267→   267→            </Button>
+   268→   268→          </motion.div>
+   269→   269→        )}
+   270→   270→
+   271→   271→        {/* Answer Result */}
+   272→   272→        <AnimatePresence>
+   273→   273→          {showResult && answerResult && (
+   274→   274→            <motion.div
+   275→   275→              initial={{ opacity: 0, y: 20 }}
+   276→   276→              animate={{ opacity: 1, y: 0 }}
+   277→   277→              exit={{ opacity: 0 }}
+   278→   278→              transition={{ duration: 0.4 }}
+   279→   279→              className="text-center space-y-3"
+   280→   280→            >
+   281→   281→              {answerResult.isCorrect ? (
+   282→   282→                <div className="space-y-2">
+   283→   283→                  <div className="flex items-center justify-center gap-2">
+   284→   284→                    <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+   285→   285→                    <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
+   286→   286→                      {t('quiz.correct', { points: String(answerResult.pointsEarned) })}
+   287→   287→                    </span>
+   288→   288→                  </div>
+   289→   289→                  {currentPlayer && currentPlayer.streak >= 2 && (
+   290→   290→                    <div className="flex items-center justify-center gap-1 text-amber-600 dark:text-amber-400">
+   291→   291→                      <Flame className="w-5 h-5" />
+   292→   292→                      <span className="font-semibold">
+   293→   293→                        {t('quiz.streak', { count: String(currentPlayer.streak) })}
+   294→   294→                      </span>
+   295→   295→                    </div>
+   296→   296→                  )}
+   297→   297→                </div>
+   298→   298→              ) : (
+   299→   299→                <div className="flex items-center justify-center gap-2">
+   300→   300→                  <XCircle className="w-6 h-6 text-red-500" />
+   301→   301→                  <span className="text-lg font-semibold text-red-600 dark:text-red-400">
+   302→   302→                    {t('quiz.incorrect', { answer: OPTION_LETTERS[answerResult.correctIndex] })}
+   303→   303→                  </span>
+   304→   304→                </div>
+   305→   305→              )}
+   306→   306→
+   307→   307→              {nextCountdown !== null && (
+   308→   308→                <p className="text-sm text-muted-foreground">
+   309→   309→                  {t('quiz.nextQuestion', { seconds: String(nextCountdown) })}
+   310→   310→                </p>
+   311→   311→              )}
+   312→   312→            </motion.div>
+   313→   313→          )}
+   314→   314→        </AnimatePresence>
+   315→   315→      </motion.div>
+   316→   316→
+   317→   317→      {/* Mini Leaderboard */}
+   318→   318→      {players.length > 1 && (
+   319→   319→        <div className="mt-4 pt-4 border-t border-border/40">
+   320→   320→          <div className="flex flex-wrap gap-2 justify-center">
+   321→   321→            {sortedPlayers.slice(0, 5).map((player, idx) => (
+   322→   322→              <Badge
+   323→   323→                key={player.id}
+   324→   324→                variant={player.id === playerId ? 'default' : 'outline'}
+   325→   325→                className={`text-xs ${
+   326→   326→                  player.id === playerId
+   327→   327→                    ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border-0'
+   328→   328→                    : ''
+   329→   329→                }`}
+   330→   330→              >
+   331→   331→                {idx === 0 && '👑 '}
+   332→   332→                {player.avatar} {player.name}: {player.score}
+   333→   333→                {player.streak >= 2 && <Flame className="w-3 h-3 ml-1 text-amber-500" />}
+   334→   334→              </Badge>
+   335→   335→            ))}
+   336→   336→          </div>
+   337→   337→        </div>
+   338→   338→      )}
+   339→   339→    </div>
+   340→   340→  )
+   341→   341→}
+   342→   342→
+   343→   343→
+   344→   344→=== src/components/quiz/ResultsScreen.tsx ===
+   345→   345→'use client'
+   346→   346→
+   347→   347→import { useTranslation } from '@/lib/i18n'
+   348→   348→import { useGameStore } from '@/lib/game-store'
+   349→   349→import { motion } from 'framer-motion'
+   350→   350→import { Trophy, Medal, Home, RotateCcw, Flame, Crown } from 'lucide-react'
+   351→   351→import { Card, CardContent } from '@/components/ui/card'
+   352→   352→import { Button } from '@/components/ui/button'
+   353→   353→import { Badge } from '@/components/ui/badge'
+   354→   354→
+   355→   355→function PodiumPlace({
+   356→   356→  player,
+   357→   357→  place,
+   358→   358→  delay,
+   359→   359→}: {
+   360→   360→  player: { name: string; avatar: string; score: number; streak: number } | null
+   361→   361→  place: 1 | 2 | 3
+   362→   362→  delay: number
+   363→   363→}) {
+   364→   364→  const { t } = useTranslation()
+   365→   365→
+   366→   366→  const sizeClasses = {
+   367→   367→    1: 'w-20 h-20 text-3xl',
+   368→   368→    2: 'w-16 h-16 text-2xl',
+   369→   369→    3: 'w-14 h-14 text-xl',
+   370→   370→  }
+   371→   371→
+   372→   372→  const bgClasses = {
+   373→   373→    1: 'bg-gradient-to-br from-amber-400 to-amber-600 shadow-xl shadow-amber-500/30',
+   374→   374→    2: 'bg-gradient-to-br from-gray-300 to-gray-500 shadow-xl shadow-gray-400/30',
+   375→   375→    3: 'bg-gradient-to-br from-orange-400 to-orange-600 shadow-xl shadow-orange-500/30',
+   376→   376→  }
+   377→   377→
+   378→   378→  const podiumHeight = {
+   379→   379→    1: 'h-28',
+   380→   380→    2: 'h-20',
+   381→   381→    3: 'h-14',
+   382→   382→  }
+   383→   383→
+   384→   384→  const podiumBg = {
+   385→   385→    1: 'bg-amber-500',
+   386→   386→    2: 'bg-gray-400',
+   387→   387→    3: 'bg-orange-500',
+   388→   388→  }
+   389→   389→
+   390→   390→  if (!player) {
+   391→   391→    return (
+   392→   392→      <motion.div
+   393→   393→        initial={{ opacity: 0, y: 30 }}
+   394→   394→        animate={{ opacity: 0.3, y: 0 }}
+   395→   395→        transition={{ duration: 0.5, delay }}
+   396→   396→        className="flex flex-col items-center"
+   397→   397→      >
+   398→   398→        <div className={`${sizeClasses[place]} rounded-full ${bgClasses[place]} flex items-center justify-center mb-2 opacity-30`}>
+   399→   399→          ?
+   400→   400→        </div>
+   401→   401→        <div className={`${podiumHeight[place]} w-20 sm:w-24 ${podiumBg[place]} rounded-t-lg opacity-30 flex items-center justify-center`}>
+   402→   402→          <span className="text-white font-bold text-xl">{place}</span>
+   403→   403→        </div>
+   404→   404→      </motion.div>
+   405→   405→    )
+   406→   406→  }
+   407→   407→
+   408→   408→  return (
+   409→   409→    <motion.div
+   410→   410→      initial={{ opacity: 0, y: 30 }}
+   411→   411→      animate={{ opacity: 1, y: 0 }}
+   412→   412→      transition={{ duration: 0.5, delay }}
+   413→   413→      className="flex flex-col items-center"
+   414→   414→    >
+   415→   415→      {place === 1 && (
+   416→   416→        <motion.div
+   417→   417→          initial={{ scale: 0 }}
+   418→   418→          animate={{ scale: 1 }}
+   419→   419→          transition={{ duration: 0.5, delay: delay + 0.3, type: 'spring' }}
+   420→   420→        >
+   421→   421→          <Crown className="w-8 h-8 text-amber-500 mb-1" />
+   422→   422→        </motion.div>
+   423→   423→      )}
+   424→   424→      <motion.div
+   425→   425→        whileHover={{ scale: 1.05 }}
+   426→   426→        className={`${sizeClasses[place]} rounded-full ${bgClasses[place]} flex items-center justify-center mb-2 cursor-default`}
+   427→   427→      >
+   428→   428→        <span>{player.avatar}</span>
+   429→   429→      </motion.div>
+   430→   430→      <p className="font-semibold text-sm text-center max-w-[80px] truncate mb-1">{player.name}</p>
+   431→   431→      <p className="text-xs text-muted-foreground mb-2">{player.score} pts</p>
+   432→   432→      {player.streak >= 2 && (
+   433→   433→        <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0 text-xs mb-1">
+   434→   434→          <Flame className="w-3 h-3 mr-1" />
+   435→   435→          {t('quiz.streak', { count: String(player.streak) })}
+   436→   436→        </Badge>
+   437→   437→      )}
+   438→   438→      <div className={`${podiumHeight[place]} w-20 sm:w-24 ${podiumBg[place]} rounded-t-lg flex items-center justify-center`}>
+   439→   439→        <span className="text-white font-bold text-xl">{place}</span>
+   440→   440→      </div>
+   441→   441→    </motion.div>
+   442→   442→  )
+   443→   443→}
+   444→   444→
+   445→   445→export default function ResultsScreen() {
+   446→   446→  const { t } = useTranslation()
+   447→   447→  const { finalResults, playerId, setCurrentView, reset } = useGameStore()
+   448→   448→
+   449→   449→  const handlePlayAgain = () => {
+   450→   450→    reset()
+   451→   451→    setCurrentView('create')
+   452→   452→  }
+   453→   453→
+   454→   454→  const handleHome = () => {
+   455→   455→    reset()
+   456→   456→    setCurrentView('landing')
+   457→   457→  }
+   458→   458→
+   459→   459→  const topThree = finalResults.slice(0, 3)
+   460→   460→  const rest = finalResults.slice(3)
+   461→   461→  const currentPlayer = finalResults.find((p) => p.id === playerId)
+   462→   462→  const playerRank = finalResults.findIndex((p) => p.id === playerId) + 1
+   463→   463→
+   464→   464→  return (
+   465→   465→    <div className="min-h-[calc(100vh-3.5rem)] flex flex-col px-4 py-6 sm:py-10 max-w-3xl mx-auto">
+   466→   466→      {/* Title & Trophy */}
+   467→   467→      <motion.div
+   468→   468→        initial={{ opacity: 0, scale: 0.8 }}
+   469→   469→        animate={{ opacity: 1, scale: 1 }}
+   470→   470→        transition={{ duration: 0.6, type: 'spring' }}
+   471→   471→        className="text-center mb-8"
+   472→   472→      >
+   473→   473→        <motion.div
+   474→   474→          animate={{ rotate: [0, -10, 10, -10, 0] }}
+   475→   475→          transition={{ duration: 0.6, delay: 0.5 }}
+   476→   476→        >
+   477→   477→          <Trophy className="w-16 h-16 text-amber-500 mx-auto mb-4" />
+   478→   478→        </motion.div>
+   479→   479→        <h1 className="text-3xl sm:text-4xl font-bold mb-2">{t('results.title')}</h1>
+   480→   480→        {finalResults.length > 0 && (
+   481→   481→          <p className="text-lg text-amber-600 dark:text-amber-400 font-semibold">
+   482→   482→            {t('results.winner', { name: finalResults[0].name })}
+   483→   483→          </p>
+   484→   484→        )}
+   485→   485→        {currentPlayer && (
+   486→   486→          <p className="text-muted-foreground mt-1">
+   487→   487→            {t('results.yourScore', { score: String(currentPlayer.score) })} #{playerRank}
+   488→   488→          </p>
+   489→   489→        )}
+   490→   490→      </motion.div>
+   491→   491→
+   492→   492→      {/* Podium */}
+   493→   493→      <div className="flex items-end justify-center gap-3 sm:gap-6 mb-10">
+   494→   494→        {/* 2nd place */}
+   495→   495→        <PodiumPlace player={topThree[1] || null} place={2} delay={0.3} />
+   496→   496→        {/* 1st place */}
+   497→   497→        <PodiumPlace player={topThree[0] || null} place={1} delay={0.1} />
+   498→   498→        {/* 3rd place */}
+   499→   499→        <PodiumPlace player={topThree[2] || null} place={3} delay={0.5} />
+   500→   500→      </div>
+   501→   501→
+   502→   502→      {/* Full Leaderboard */}
+   503→   503→      {rest.length > 0 && (
+   504→   504→        <Card className="border-border/50 shadow-lg mb-8">
+   505→   505→          <CardContent className="pt-4 pb-2">
+   506→   506→            <div className="space-y-2 max-h-64 overflow-y-auto">
+   507→   507→              {rest.map((player, index) => (
+   508→   508→                <motion.div
+   509→   509→                  key={player.id}
+   510→   510→                  initial={{ opacity: 0, x: -20 }}
+   511→   511→                  animate={{ opacity: 1, x: 0 }}
+   512→   512→                  transition={{ duration: 0.3, delay: 0.6 + index * 0.05 }}
+   513→   513→                  className={`flex items-center gap-3 p-3 rounded-lg ${
+   514→   514→                    player.id === playerId
+   515→   515→                      ? 'bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800'
+   516→   516→                      : 'bg-muted/50'
+   517→   517→                  }`}
+   518→   518→                >
+   519→   519→                  <span className="w-8 text-center font-bold text-muted-foreground">
+   520→   520→                    {index + 4}
+   521→   521→                  </span>
+   522→   522→                  <span className="text-lg">{player.avatar}</span>
+   523→   523→                  <span className="flex-1 font-medium truncate">{player.name}</span>
+   524→   524→                  {player.streak >= 2 && (
+   525→   525→                    <Flame className="w-4 h-4 text-amber-500" />
+   526→   526→                  )}
+   527→   527→                  <span className="font-semibold text-sm">{player.score} pts</span>
+   528→   528→                </motion.div>
+   529→   529→              ))}
+   530→   530→            </div>
+   531→   531→          </CardContent>
+   532→   532→        </Card>
+   533→   533→      )}
+   534→   534→
+   535→   535→      {/* Action Buttons */}
+   536→   536→      <div className="mt-auto flex flex-col sm:flex-row gap-3 justify-center">
+   537→   537→        <Button
+   538→   538→          onClick={handlePlayAgain}
+   539→   539→          size="lg"
+   540→   540→          className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 shadow-lg shadow-purple-500/25"
+   541→   541→        >
+   542→   542→          <RotateCcw className="w-4 h-4 mr-2" />
+   543→   543→          {t('results.playAgain')}
+   544→   544→        </Button>
+   545→   545→        <Button
+   546→   546→          onClick={handleHome}
+   547→   547→          variant="outline"
+   548→   548→          size="lg"
+   549→   549→          className="border-2"
+   550→   550→        >
+   551→   551→          <Home className="w-4 h-4 mr-2" />
+   552→   552→          {t('results.backToHome')}
+   553→   553→        </Button>
+   554→   554→      </div>
+   555→   555→    </div>
+   556→   556→  )
+   557→   557→}
+   558→   558→
+   559→   559→
+   560→   560→=== src/components/quiz/LobbyScreen.tsx ===
+   561→   561→'use client'
+   562→   562→
+   563→   563→import { useTranslation } from '@/lib/i18n'
+   564→   564→import { useGameStore } from '@/lib/game-store'
+   565→   565→import { motion, AnimatePresence } from 'framer-motion'
+   566→   566→import { Copy, Check, Crown, Play, Loader2, Wifi, WifiOff } from 'lucide-react'
+   567→   567→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+   568→   568→import { Button } from '@/components/ui/button'
+   569→   569→import { Badge } from '@/components/ui/badge'
+   570→   570→import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+   571→   571→import { Separator } from '@/components/ui/separator'
+   572→   572→import { useState } from 'react'
+   573→   573→
+   574→   574→export default function LobbyScreen() {
+   575→   575→  const { t } = useTranslation()
+   576→   576→  const {
+   577→   577→    gameCode,
+   578→   578→    players,
+   579→   579→    isHost,
+   580→   580→    gameSettings,
+   581→   581→    isConnected,
+   582→   582→    setCurrentView,
+   583→   583→  } = useGameStore()
+   584→   584→
+   585→   585→  const [copied, setCopied] = useState(false)
+   586→   586→  const [starting, setStarting] = useState(false)
+   587→   587→
+   588→   588→  const handleCopyCode = async () => {
+   589→   589→    if (!gameCode) return
+   590→   590→    try {
+   591→   591→      await navigator.clipboard.writeText(gameCode)
+   592→   592→      setCopied(true)
+   593→   593→      setTimeout(() => setCopied(false), 2000)
+   594→   594→    } catch {
+   595→   595→      // Fallback
+   596→   596→      const textArea = document.createElement('textarea')
+   597→   597→      textArea.value = gameCode
+   598→   598→      document.body.appendChild(textArea)
+   599→   599→      textArea.select()
+   600→   600→      document.execCommand('copy')
+   601→   601→      document.body.removeChild(textArea)
+   602→   602→      setCopied(true)
+   603→   603→      setTimeout(() => setCopied(false), 2000)
+   604→   604→    }
+   605→   605→  }
+   606→   606→
+   607→   607→  const handleStartGame = () => {
+   608→   608→    setStarting(true)
+   609→   609→    if (typeof window !== 'undefined') {
+   610→   610→      window.dispatchEvent(new CustomEvent('quiz-start-game'))
+   611→   611→    }
+   612→   612→  }
+   613→   613→
+   614→   614→  return (
+   615→   615→    <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-4 py-8">
+   616→   616→      <motion.div
+   617→   617→        initial={{ opacity: 0, y: 20 }}
+   618→   618→        animate={{ opacity: 1, y: 0 }}
+   619→   619→        transition={{ duration: 0.5 }}
+   620→   620→        className="w-full max-w-2xl space-y-6"
+   621→   621→      >
+   622→   622→        {/* Room Code Card */}
+   623→   623→        <Card className="border-purple-200 dark:border-purple-800/50 shadow-xl overflow-hidden">
+   624→   624→          <div className="bg-gradient-to-r from-purple-600 to-purple-700 p-6 text-center">
+   625→   625→            <p className="text-purple-200 text-sm mb-2">{t('lobby.shareCode')}</p>
+   626→   626→            <div className="flex items-center justify-center gap-3">
+   627→   627→              <span className="text-4xl sm:text-5xl font-mono font-bold tracking-[0.3em] text-white">
+   628→   628→                {gameCode}
+   629→   629→              </span>
+   630→   630→              <Button
+   631→   631→                variant="ghost"
+   632→   632→                size="sm"
+   633→   633→                onClick={handleCopyCode}
+   634→   634→                className="text-white hover:bg-white/20 h-10 w-10 p-0"
+   635→   635→                aria-label="Copy room code"
+   636→   636→              >
+   637→   637→                {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+   638→   638→              </Button>
+   639→   639→            </div>
+   640→   640→            {copied && (
+   641→   641→              <motion.p
+   642→   642→                initial={{ opacity: 0, y: 5 }}
+   643→   643→                animate={{ opacity: 1, y: 0 }}
+   644→   644→                className="text-emerald-300 text-xs mt-1"
+   645→   645→              >
+   646→   646→                ✓ Copied!
+   647→   647→              </motion.p>
+   648→   648→            )}
+   649→   649→          </div>
+   650→   650→        </Card>
+   651→   651→
+   652→   652→        {/* Players List */}
+   653→   653→        <Card className="border-border/50 shadow-lg">
+   654→   654→          <CardHeader className="pb-3">
+   655→   655→            <CardTitle className="flex items-center justify-between">
+   656→   656→              <span>{t('lobby.players')} ({players.length})</span>
+   657→   657→              <Badge
+   658→   658→                variant={isConnected ? 'default' : 'destructive'}
+   659→   659→                className={`text-xs ${
+   660→   660→                  isConnected
+   661→   661→                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+   662→   662→                    : ''
+   663→   663→                } border-0`}
+   664→   664→              >
+   665→   665→                {isConnected ? (
+   666→   666→                  <Wifi className="w-3 h-3 mr-1" />
+   667→   667→                ) : (
+   668→   668→                  <WifiOff className="w-3 h-3 mr-1" />
+   669→   669→                )}
+   670→   670→                {isConnected ? t('common.connected') : t('common.disconnected')}
+   671→   671→              </Badge>
+   672→   672→            </CardTitle>
+   673→   673→          </CardHeader>
+   674→   674→          <CardContent>
+   675→   675→            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+   676→   676→              <AnimatePresence>
+   677→   677→                {players.map((player, index) => (
+   678→   678→                  <motion.div
+   679→   679→                    key={player.id}
+   680→   680→                    initial={{ opacity: 0, x: -20 }}
+   681→   681→                    animate={{ opacity: 1, x: 0 }}
+   682→   682→                    exit={{ opacity: 0, x: 20 }}
+   683→   683→                    transition={{ duration: 0.3, delay: index * 0.05 }}
+   684→   684→                    className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/80 transition-colors"
+   685→   685→                  >
+   686→   686→                    <Avatar className="h-10 w-10 border-2 border-background">
+   687→   687→                      <AvatarFallback className="bg-purple-100 dark:bg-purple-900/30 text-lg">
+   688→   688→                        {player.avatar}
+   689→   689→                      </AvatarFallback>
+   690→   690→                    </Avatar>
+   691→   691→                    <div className="flex-1 min-w-0">
+   692→   692→                      <div className="flex items-center gap-2">
+   693→   693→                        <span className="font-medium truncate">{player.name}</span>
+   694→   694→                        {player.isHost && (
+   695→   695→                          <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0 text-xs">
+   696→   696→                            <Crown className="w-3 h-3 mr-1" />
+   697→   697→                            {t('lobby.youAreHost')}
+   698→   698→                          </Badge>
+   699→   699→                        )}
+   700→   700→                      </div>
+   701→   701→                    </div>
+   702→   702→                    <div
+   703→   703→                      className={`w-2.5 h-2.5 rounded-full ${
+   704→   704→                        player.isConnected ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'
+   705→   705→                      }`}
+   706→   706→                      aria-label={player.isConnected ? t('common.connected') : t('common.disconnected')}
+   707→   707→                    />
+   708→   708→                  </motion.div>
+   709→   709→                ))}
+   710→   710→              </AnimatePresence>
+   711→   711→
+   712→   712→              {players.length === 0 && (
+   713→   713→                <p className="text-center text-muted-foreground py-4">
+   714→   714→                  {t('common.loading')}
+   715→   715→                </p>
+   716→   716→              )}
+   717→   717→            </div>
+   718→   718→          </CardContent>
+   719→   719→        </Card>
+   720→   720→
+   721→   721→        {/* Settings Summary */}
+   722→   722→        {gameSettings && (
+   723→   723→          <Card className="border-border/50">
+   724→   724→            <CardContent className="pt-4 pb-4">
+   725→   725→              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+   726→   726→                <div className="text-center">
+   727→   727→                  <p className="text-muted-foreground text-xs">{t('gameSetup.category')}</p>
+   728→   728→                  <p className="font-medium capitalize">
+   729→   729→                    {t(`category.${gameSettings.category}` as Parameters<typeof t>[0]) !== `category.${gameSettings.category}`
+   730→   730→                      ? t(`category.${gameSettings.category}` as Parameters<typeof t>[0])
+   731→   731→                      : gameSettings.category}
+   732→   732→                  </p>
+   733→   733→                </div>
+   734→   734→                <div className="text-center">
+   735→   735→                  <p className="text-muted-foreground text-xs">{t('gameSetup.difficulty')}</p>
+   736→   736→                  <p className="font-medium">{t(`difficulty.${gameSettings.difficulty}` as Parameters<typeof t>[0])}</p>
+   737→   737→                </div>
+   738→   738→                <div className="text-center">
+   739→   739→                  <p className="text-muted-foreground text-xs">{t('gameSetup.questionCount')}</p>
+   740→   740→                  <p className="font-medium">{gameSettings.questionCount}</p>
+   741→   741→                </div>
+   742→   742→                <div className="text-center">
+   743→   743→                  <p className="text-muted-foreground text-xs">{t('gameSetup.timePerQuestion')}</p>
+   744→   744→                  <p className="font-medium">{gameSettings.timePerQuestion}s</p>
+   745→   745→                </div>
+   746→   746→              </div>
+   747→   747→            </CardContent>
+   748→   748→          </Card>
+   749→   749→        )}
+   750→   750→
+   751→   751→        <Separator />
+   752→   752→
+   753→   753→        {/* Action Area */}
+   754→   754→        <div className="text-center space-y-4">
+   755→   755→          {isHost ? (
+   756→   756→            <Button
+   757→   757→              onClick={handleStartGame}
+   758→   758→              disabled={starting || players.length < 1}
+   759→   759→              size="lg"
+   760→   760→              className="px-12 h-14 text-lg bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 shadow-lg shadow-purple-500/25"
+   761→   761→              aria-label={t('lobby.startGame')}
+   762→   762→            >
+   763→   763→              {starting ? (
+   764→   764→                <>
+   765→   765→                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+   766→   766→                  {t('common.loading')}
+   767→   767→                </>
+   768→   768→              ) : (
+   769→   769→                <>
+   770→   770→                  <Play className="w-5 h-5 mr-2" />
+   771→   771→                  {t('lobby.startGame')}
+   772→   772→                </>
+   773→   773→              )}
+   774→   774→            </Button>
+   775→   775→          ) : (
+   776→   776→            <div className="flex flex-col items-center gap-2 py-4">
+   777→   777→              <Loader2 className="w-6 h-6 animate-spin text-purple-600" />
+   778→   778→              <p className="text-muted-foreground">{t('lobby.waitingForHost')}</p>
+   779→   779→            </div>
+   780→   780→          )}
+   781→   781→        </div>
+   782→   782→      </motion.div>
+   783→   783→    </div>
+   784→   784→  )
+   785→   785→}
+   786→   786→
+   787→   787→
+   788→   788→=== src/components/quiz/CreateGameScreen.tsx ===
+   789→   789→'use client'
+   790→   790→
+   791→   791→import { useState } from 'react'
+   792→   792→import { useTranslation, type Locale } from '@/lib/i18n'
+   793→   793→import { useGameStore, type GameSettings } from '@/lib/game-store'
+   794→   794→import { CATEGORY_LABELS } from '@/lib/game-utils'
+   795→   795→import { motion } from 'framer-motion'
+   796→   796→import { Loader2, Brain } from 'lucide-react'
+   797→   797→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+   798→   798→import { Input } from '@/components/ui/input'
+   799→   799→import { Label } from '@/components/ui/label'
+   800→   800→import { Button } from '@/components/ui/button'
+   801→
+   802→[showing lines 1-800 of 1714; use offset=801 with limit to continue reading]

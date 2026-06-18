@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Game {
+  id                   String   @id @default(cuid())
+  code                 String   @unique
+  status               String   @default("WAITING")
+  category             String
+  difficulty           String   @default("MIXED")
+  language             String   @default("pt-BR")
+  maxPlayers           Int      @default(8)
+  questionCount        Int      @default(10)
+  timePerQuestion      Int      @default(30)
+  currentQuestionIndex Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  players   Player[]    @relation("GamePlayers")
+  questions Question[]  @relation("GameQuestions")
+  stats     GameStats?
+}
+
+model Player {
+  id          String   @id @default(cuid())
+  name        String
+  avatar      String   @default("🎮")
+  score       Int      @default(0)
+  streak      Int      @default(0)
+  socketId    String?
+  isHost      Boolean  @default(false)
+  isConnected Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  gameId String
+  game   Game   @relation("GamePlayers", fields: [gameId], references: [id], onDelete: Cascade)
+
+  answers Answer[]
+}
+
+model Question {
+  id            String   @id @default(cuid())
+  text          String
+  optionA       String
+  optionB       String
+  optionC       String
+  optionD       String
+  correctAnswer String
+  explanation   String?
+  order         Int
+  timeLimit     Int      @default(30)
+  createdAt     DateTime @default(now())
+
+  gameId String
+  game   Game   @relation("GameQuestions", fields: [gameId], references: [id], onDelete: Cascade)
+
+  answers Answer[]
+}
+
+model Answer {
+  id             String   @id @default(cuid())
+  selectedOption String
+  isCorrect      Boolean
+  responseTimeMs Int
+  createdAt      DateTime @default(now())
+
+  playerId   String
+  player     Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+model GameStats {
+  id                    String   @id @default(cuid())
+  totalQuestions        Int
+  averageResponseTimeMs Int      @default(0)
+  perfectScores         Int      @default(0)
+  createdAt             DateTime @default(now())
+
+  gameId String @unique
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+}

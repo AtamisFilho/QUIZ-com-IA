@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type GameView = 'landing' | 'create' | 'join' | 'lobby' | 'playing' | 'results' | 'admin'
+export type GameView = 'landing' | 'create' | 'join' | 'lobby' | 'playing' | 'results' | 'admin' | 'solo' | 'profile' | 'subscription' | 'leaderboard' | 'daily'
 
 export interface Player {
   id: string
@@ -94,6 +94,14 @@ interface GameState {
   isConnected: boolean
   setIsConnected: (connected: boolean) => void
 
+  // User profile
+  userProfile: { level: number; xp: number; tier: string } | null
+  setUserProfile: (profile: { level: number; xp: number; tier: string } | null) => void
+
+  // Subscription tier
+  subscriptionTier: string
+  setSubscriptionTier: (tier: string) => void
+
   // Error
   error: string | null
   setError: (error: string | null) => void
@@ -121,6 +129,8 @@ const initialState = {
   answerResult: null,
   showResult: false,
   finalResults: [],
+  userProfile: null,
+  subscriptionTier: 'free',
   isConnected: false,
   error: null,
 }
@@ -190,6 +200,10 @@ export const useGameStore = create<GameState>((set) => ({
   setShowResult: (show) => set({ showResult: show }),
 
   setFinalResults: (results) => set({ finalResults: results }),
+
+  setUserProfile: (profile) => set({ userProfile: profile }),
+  setSubscriptionTier: (tier) => set({ subscriptionTier: tier }),
+
   setIsConnected: (connected) => set({ isConnected: connected }),
   setError: (error) => set({ error }),
 

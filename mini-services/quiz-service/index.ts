@@ -1,13 +1,80 @@
-import { createServer } from 'http'
+/**
+ * QUIZ AI - Socket.IO Service
+ * 
+ * Scaling Architecture:
+ * - Single instance: Works without Redis (development)
+ * - Cluster mode: Set REDIS_URL to enable Redis adapter (production)
+ * - Multiple instances behind a load balancer with sticky sessions
+ * 
+ * Environment Variables:
+ * - PORT: Server port (default: 3003)
+ * - REDIS_URL: Redis connection URL (optional, enables cluster mode)
+ * - AI_API_URL: URL for AI question generation (default: http://localhost:3000)
+ */
+
+import { createServer, IncomingMessage, ServerResponse } from 'http'
 import { Server, Socket } from 'socket.io'
 
-const httpServer = createServer()
-const io = new Server(httpServer, {
-  path: '/',
+// ============================================================
+// Configuration
+// ============================================================
+
+const config = {
+  port: parseInt(process.env.PORT || '3003', 10),
+  redisUrl: process.env.REDIS_URL || '',
+  aiApiUrl: process.env.AI_API_URL || 'http://localhost:3000',
   cors: { origin: '*', methods: ['GET', 'POST'] },
   pingTimeout: 60000,
   pingInterval: 25000,
+  disconnectRemovalTimeout: 60000,
+  answerRevealDelay: 3000,
+}
+
+// ============================================================
+// HTTP Server + Socket.IO
+// ============================================================
+
+const httpServer = createServer()
+
+const io = new Server(httpServer, {
+  cors: config.cors,
+  pingTimeout: config.pingTimeout,
+  pingInterval: config.pingInterval,
 })
+
+// Health check endpoint - must be registered after socket.io
+httpServer.on('request', (req: IncomingMessage, res: ServerResponse) => {
+  if (req.method === 'GET' && req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      status: 'ok',
+      rooms: rooms.size,
+      connections: io.sockets.sockets.size,
+    }))
+    return
+  }
+  // Let other requests fall through to socket.io
+})
+
+// ============================================================
+// Redis Adapter for horizontal scaling
+// ============================================================
+
+const REDIS_URL = config.redisUrl
+if (REDIS_URL) {
+  try {
+    const { createClient } = await import('redis')
+    const pubClient = createClient({ url: REDIS_URL })
+    const subClient = pubClient.duplicate()
+    await Promise.all([pubClient.connect(), subClient.connect()])
+    io.adapter(new (await import('@socket.io/redis-adapter')).RedisAdapter(pubClient, subClient))
+    console.log('[Quiz Service] Redis adapter connected')
+  } catch (err) {
+    console.warn('[Quiz Service] Redis connection failed, running in standalone mode:', err)
+  }
+} else {
+  console.log('[Quiz Service] Running in standalone mode (no Redis)')
+}
 
 // ============================================================
 // Types
@@ -265,7 +332,7 @@ function revealAnswer(room: GameRoom) {
     if (room.status === 'FINISHED') return
     if (room.currentQuestionIndex >= room.questions.length - 1) endGame(room)
     else sendNextQuestion(room)
-  }, 3000)
+  }, config.answerRevealDelay)
 }
 
 function sendNextQuestion(room: GameRoom) {
@@ -443,7 +510,7 @@ io.on('connection', (socket: Socket) => {
 
     // Try AI question generation
     try {
-      const aiResponse = await fetch('http://localhost:3000/api/ai/generate-questions', {
+      const aiResponse = await fetch(`${config.aiApiUrl}/api/ai/generate-questions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -538,7 +605,7 @@ io.on('connection', (socket: Socket) => {
         room.disconnectTimers.delete(playerId)
         if (room.players.size === 0) { clearQuestionTimer(room); rooms.delete(roomCode) }
       }
-    }, 60000)
+    }, config.disconnectRemovalTimeout)
     room.disconnectTimers.set(playerId, disconnectTimer)
     console.log(`[Room ${roomCode}] ${player.name} disconnected`)
   })
@@ -550,9 +617,9 @@ io.on('connection', (socket: Socket) => {
 // Start Server
 // ============================================================
 
-const PORT = 3003
-httpServer.listen(PORT, () => {
-  console.log(`[Quiz Service] Socket.io server running on port ${PORT}`)
+httpServer.listen(config.port, () => {
+  console.log(`[Quiz Service] Socket.io server running on port ${config.port}`)
+  console.log(`[Quiz Service] Health check available at http://localhost:${config.port}/health`)
 })
 
 // ============================================================

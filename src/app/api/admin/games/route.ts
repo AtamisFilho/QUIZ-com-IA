@@ -5,7 +5,7 @@ export async function GET() {
   try {
     const totalGames = await db.game.count()
     const activeGames = await db.game.count({ where: { status: { in: ['WAITING', 'PLAYING'] } } })
-    const totalPlayers = await db.player.count()
+    const totalPlayers = await db.gamePlayer.count()
     const totalQuestions = await db.question.count()
 
     const recentGames = await db.game.findMany({

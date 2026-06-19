@@ -3,7 +3,7 @@
 import { useTranslation, type Locale } from '@/lib/i18n'
 import { useTheme } from 'next-themes'
 import { useGameStore } from '@/lib/game-store'
-import { Brain, Sun, Moon, Monitor, Globe, Shield } from 'lucide-react'
+import { Brain, Sun, Moon, Monitor, Globe, Shield, Gamepad2, User, Crown, Trophy, Calendar } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -77,6 +77,71 @@ export default function Header() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {/* Solo */}
+          {currentView !== 'solo' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => setCurrentView('solo')}
+              aria-label={t('solo.title')}
+            >
+              <Gamepad2 className="h-4 w-4" />
+            </Button>
+          )}
+
+          {/* Daily Challenge */}
+          {currentView !== 'daily' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => setCurrentView('daily')}
+              aria-label={t('daily.title')}
+            >
+              <Calendar className="h-4 w-4" />
+            </Button>
+          )}
+
+          {/* Leaderboard */}
+          {currentView !== 'leaderboard' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => setCurrentView('leaderboard')}
+              aria-label={t('leaderboard.title')}
+            >
+              <Trophy className="h-4 w-4" />
+            </Button>
+          )}
+
+          {/* Subscription */}
+          {currentView !== 'subscription' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => setCurrentView('subscription')}
+              aria-label={t('subscription.title')}
+            >
+              <Crown className="h-4 w-4" />
+            </Button>
+          )}
+
+          {/* Profile */}
+          {currentView !== 'profile' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => setCurrentView('profile')}
+              aria-label={t('profile.title')}
+            >
+              <User className="h-4 w-4" />
+            </Button>
+          )}
 
           {/* Admin */}
           {currentView !== 'admin' && (

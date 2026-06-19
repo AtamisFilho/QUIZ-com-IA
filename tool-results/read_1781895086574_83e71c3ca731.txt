@@ -1,0 +1,774 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useCallback, useRef } from 'react'
+     4→import { useTranslation } from '@/lib/i18n'
+     5→import { useGameStore } from '@/lib/game-store'
+     6→import { motion, AnimatePresence } from 'framer-motion'
+     7→import {
+     8→  Clock, CheckCircle2, XCircle, Flame, Zap, Trophy,
+     9→  ArrowLeft, Play, RotateCcw, Home, Settings, Sparkles,
+    10→} from 'lucide-react'
+    11→import { Button } from '@/components/ui/button'
+    12→import { Badge } from '@/components/ui/badge'
+    13→import { Input } from '@/components/ui/input'
+    14→import { Label } from '@/components/ui/label'
+    15→import {
+    16→  Select,
+    17→  SelectContent,
+    18→  SelectItem,
+    19→  SelectTrigger,
+    20→  SelectValue,
+    21→} from '@/components/ui/select'
+    22→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+    23→
+    24→const OPTION_COLORS = [
+    25→  { bg: 'from-quiz-emerald to-emerald-600', hover: 'hover:shadow-quiz-emerald/30', lightBg: 'bg-emerald-50 dark:bg-emerald-950/30', border: 'border-emerald-500', text: 'text-emerald-700 dark:text-emerald-400' },
+    26→  { bg: 'from-quiz-amber to-amber-600', hover: 'hover:shadow-quiz-amber/30', lightBg: 'bg-amber-50 dark:bg-amber-950/30', border: 'border-amber-500', text: 'text-amber-700 dark:text-amber-400' },
+    27→  { bg: 'from-quiz-rose to-rose-600', hover: 'hover:shadow-quiz-rose/30', lightBg: 'bg-rose-50 dark:bg-rose-950/30', border: 'border-rose-500', text: 'text-rose-700 dark:text-rose-400' },
+    28→  { bg: 'from-quiz-violet to-violet-600', hover: 'hover:shadow-quiz-violet/30', lightBg: 'bg-violet-50 dark:bg-violet-950/30', border: 'border-violet-500', text: 'text-violet-700 dark:text-violet-400' },
+    29→]
+    30→
+    31→const OPTION_LETTERS = ['A', 'B', 'C', 'D']
+    32→
+    33→interface SoloQuestion {
+    34→  text: string
+    35→  options: string[]
+    36→  correctIndex: number
+    37→  category: string
+    38→  difficulty: string
+    39→  explanation?: string
+    40→}
+    41→
+    42→interface SoloGameState {
+    43→  status: 'setup' | 'playing' | 'result'
+    44→  questions: SoloQuestion[]
+    45→  currentIndex: number
+    46→  score: number
+    47→  streak: number
+    48→  bestStreak: number
+    49→  timeRemaining: number
+    50→  selectedOption: number | null
+    51→  hasSubmitted: boolean
+    52→  showResult: boolean
+    53→  correctCount: number
+    54→  totalAnswered: number
+    55→  totalTimeMs: number
+    56→  isLoading: boolean
+    57→}
+    58→
+    59→const DEFAULT_TIME = 20
+    60→
+    61→function getSoloQuestionFromGenerated(q: {
+    62→  text: string
+    63→  optionA: string
+    64→  optionB: string
+    65→  optionC: string
+    66→  optionD: string
+    67→  correctAnswer: string
+    68→  explanation?: string
+    69→  category: string
+    70→  difficulty: string
+    71→}): SoloQuestion {
+    72→  const answerMap: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 }
+    73→  return {
+    74→    text: q.text,
+    75→    options: [q.optionA, q.optionB, q.optionC, q.optionD],
+    76→    correctIndex: answerMap[q.correctAnswer] ?? 0,
+    77→    category: q.category,
+    78→    difficulty: q.difficulty,
+    79→    explanation: q.explanation,
+    80→  }
+    81→}
+    82→
+    83→export default function SoloModeScreen() {
+    84→  const { t, locale } = useTranslation()
+    85→  const { setCurrentView, playerName, setPlayerInfo } = useGameStore()
+    86→
+    87→  const [state, setState] = useState<SoloGameState>({
+    88→    status: 'setup',
+    89→    questions: [],
+    90→    currentIndex: 0,
+    91→    score: 0,
+    92→    streak: 0,
+    93→    bestStreak: 0,
+    94→    timeRemaining: DEFAULT_TIME,
+    95→    selectedOption: null,
+    96→    hasSubmitted: false,
+    97→    showResult: false,
+    98→    correctCount: 0,
+    99→    totalAnswered: 0,
+   100→    totalTimeMs: 0,
+   101→    isLoading: false,
+   102→  })
+   103→
+   104→  // Setup form
+   105→  const [setupCategory, setSetupCategory] = useState('general')
+   106→  const [setupDifficulty, setSetupDifficulty] = useState('MIXED')
+   107→  const [setupQuestionCount, setSetupQuestionCount] = useState('10')
+   108→  const [setupTimePerQuestion, setSetupTimePerQuestion] = useState('20')
+   109→  const [setupPlayerName, setSetupPlayerName] = useState(playerName || '')
+   110→
+   111→  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+   112→
+   113→  const timePerQuestion = parseInt(setupTimePerQuestion) || DEFAULT_TIME
+   114→
+   115→  // Clear timer on unmount
+   116→  useEffect(() => {
+   117→    return () => {
+   118→      if (timerRef.current) clearInterval(timerRef.current)
+   119→    }
+   120→  }, [])
+   121→
+   122→  // Timer logic
+   123→  useEffect(() => {
+   124→    if (state.status !== 'playing' || state.hasSubmitted || state.showResult) return
+   125→
+   126→    timerRef.current = setInterval(() => {
+   127→      setState(prev => {
+   128→        if (prev.timeRemaining <= 1) {
+   129→          // Time's up - auto submit wrong
+   130→          return {
+   131→            ...prev,
+   132→            timeRemaining: 0,
+   133→            hasSubmitted: true,
+   134→            showResult: true,
+   135→            streak: 0,
+   136→            totalAnswered: prev.totalAnswered + 1,
+   137→            totalTimeMs: prev.totalTimeMs + (timePerQuestion * 1000),
+   138→          }
+   139→        }
+   140→        return { ...prev, timeRemaining: prev.timeRemaining - 1 }
+   141→      })
+   142→    }, 1000)
+   143→
+   144→    return () => {
+   145→      if (timerRef.current) clearInterval(timerRef.current)
+   146→    }
+   147→  }, [state.status, state.hasSubmitted, state.showResult, state.currentIndex, timePerQuestion])
+   148→
+   149→  const startGame = useCallback(async () => {
+   150→    setState(prev => ({ ...prev, isLoading: true }))
+   151→
+   152→    try {
+   153→      const response = await fetch('/api/solo/start', {
+   154→        method: 'POST',
+   155→        headers: { 'Content-Type': 'application/json' },
+   156→        body: JSON.stringify({
+   157→          category: setupCategory,
+   158→          difficulty: setupDifficulty,
+   159→          language: locale,
+   160→          questionCount: parseInt(setupQuestionCount) || 10,
+   161→          timePerQuestion: parseInt(setupTimePerQuestion) || 20,
+   162→        }),
+   163→      })
+   164→
+   165→      const data = await response.json()
+   166→
+   167→      if (!response.ok) {
+   168→        throw new Error(data.error || 'Failed to start game')
+   169→      }
+   170→
+   171→      const questions: SoloQuestion[] = data.questions.map(getSoloQuestionFromGenerated)
+   172→
+   173→      // Save player name
+   174→      const name = setupPlayerName.trim() || 'Player'
+   175→      const playerId = `solo-${Date.now()}`
+   176→      setPlayerInfo({ id: playerId, name, avatar: '🎮', isHost: false })
+   177→
+   178→      setState({
+   179→        status: 'playing',
+   180→        questions,
+   181→        currentIndex: 0,
+   182→        score: 0,
+   183→        streak: 0,
+   184→        bestStreak: 0,
+   185→        timeRemaining: parseInt(setupTimePerQuestion) || DEFAULT_TIME,
+   186→        selectedOption: null,
+   187→        hasSubmitted: false,
+   188→        showResult: false,
+   189→        correctCount: 0,
+   190→        totalAnswered: 0,
+   191→        totalTimeMs: 0,
+   192→        isLoading: false,
+   193→      })
+   194→    } catch (err) {
+   195→      console.error('Failed to start solo game:', err)
+   196→      setState(prev => ({ ...prev, isLoading: false }))
+   197→    }
+   198→  }, [setupCategory, setupDifficulty, setupQuestionCount, setupTimePerQuestion, setupPlayerName, locale, setPlayerInfo])
+   199→
+   200→  const handleSelectOption = useCallback((index: number) => {
+   201→    if (state.hasSubmitted || state.showResult) return
+   202→    setState(prev => ({ ...prev, selectedOption: index }))
+   203→  }, [state.hasSubmitted, state.showResult])
+   204→
+   205→  const handleSubmitAnswer = useCallback(() => {
+   206→    if (state.selectedOption === null || state.hasSubmitted || state.showResult) return
+   207→
+   208→    const currentQuestion = state.questions[state.currentIndex]
+   209→    if (!currentQuestion) return
+   210→
+   211→    const isCorrect = state.selectedOption === currentQuestion.correctIndex
+   212→    const responseTimeMs = (timePerQuestion - state.timeRemaining) * 1000
+   213→    const speedBonus = isCorrect ? Math.max(0, Math.floor((state.timeRemaining / timePerQuestion) * 50)) : 0
+   214→    const streakBonus = isCorrect ? state.streak * 5 : 0
+   215→    const pointsEarned = isCorrect ? 100 + speedBonus + streakBonus : 0
+   216→
+   217→    setState(prev => ({
+   218→      ...prev,
+   219→      hasSubmitted: true,
+   220→      showResult: true,
+   221→      score: prev.score + pointsEarned,
+   222→      streak: isCorrect ? prev.streak + 1 : 0,
+   223→      bestStreak: isCorrect ? Math.max(prev.bestStreak, prev.streak + 1) : prev.bestStreak,
+   224→      correctCount: prev.correctCount + (isCorrect ? 1 : 0),
+   225→      totalAnswered: prev.totalAnswered + 1,
+   226→      totalTimeMs: prev.totalTimeMs + responseTimeMs,
+   227→    }))
+   228→  }, [state.selectedOption, state.hasSubmitted, state.showResult, state.questions, state.currentIndex, state.timeRemaining, state.streak, timePerQuestion])
+   229→
+   230→  // Auto-submit on selection
+   231→  useEffect(() => {
+   232→    if (state.selectedOption !== null && !state.hasSubmitted && !state.showResult) {
+   233→      const timer = setTimeout(handleSubmitAnswer, 300)
+   234→      return () => clearTimeout(timer)
+   235→    }
+   236→  }, [state.selectedOption, state.hasSubmitted, state.showResult, handleSubmitAnswer])
+   237→
+   238→  const handleNextQuestion = useCallback(() => {
+   239→    const nextIndex = state.currentIndex + 1
+   240→    if (nextIndex >= state.questions.length) {
+   241→      // Finish game
+   242→      setState(prev => ({ ...prev, status: 'result' }))
+   243→
+   244→      // Try to save results to API
+   245→      fetch('/api/solo/finish', {
+   246→        method: 'POST',
+   247→        headers: { 'Content-Type': 'application/json' },
+   248→        body: JSON.stringify({
+   249→          score: state.score,
+   250→          correctCount: state.correctCount,
+   251→          totalCount: state.questions.length,
+   252→          streak: state.bestStreak,
+   253→          category: setupCategory,
+   254→          difficulty: setupDifficulty,
+   255→        }),
+   256→      }).catch(() => {})
+   257→    } else {
+   258→      setState(prev => ({
+   259→        ...prev,
+   260→        currentIndex: nextIndex,
+   261→        timeRemaining: timePerQuestion,
+   262→        selectedOption: null,
+   263→        hasSubmitted: false,
+   264→        showResult: false,
+   265→      }))
+   266→    }
+   267→  }, [state.currentIndex, state.questions.length, state.score, state.correctCount, state.bestStreak, setupCategory, setupDifficulty, timePerQuestion])
+   268→
+   269→  const handlePlayAgain = useCallback(() => {
+   270→    setState({
+   271→      status: 'setup',
+   272→      questions: [],
+   273→      currentIndex: 0,
+   274→      score: 0,
+   275→      streak: 0,
+   276→      bestStreak: 0,
+   277→      timeRemaining: DEFAULT_TIME,
+   278→      selectedOption: null,
+   279→      hasSubmitted: false,
+   280→      showResult: false,
+   281→      correctCount: 0,
+   282→      totalAnswered: 0,
+   283→      totalTimeMs: 0,
+   284→      isLoading: false,
+   285→    })
+   286→  }, [])
+   287→
+   288→  const handleQuickPlay = useCallback(() => {
+   289→    setSetupCategory('general')
+   290→    setSetupDifficulty('MIXED')
+   291→    setSetupQuestionCount('10')
+   292→    setSetupTimePerQuestion('20')
+   293→    // Trigger start after a tick
+   294→    setTimeout(() => {
+   295→      startGame()
+   296→    }, 50)
+   297→  }, [startGame])
+   298→
+   299→  // ============ RENDER: SETUP ============
+   300→  if (state.status === 'setup') {
+   301→    return (
+   302→      <div className="min-h-[calc(100vh-3.5rem)] flex flex-col items-center justify-center px-4 py-8">
+   303→        <motion.div
+   304→          initial={{ opacity: 0, y: 20 }}
+   305→          animate={{ opacity: 1, y: 0 }}
+   306→          className="w-full max-w-lg"
+   307→        >
+   308→          {/* Header */}
+   309→          <div className="text-center mb-8">
+   310→            <motion.div
+   311→              initial={{ scale: 0 }}
+   312→              animate={{ scale: 1 }}
+   313→              transition={{ type: 'spring', stiffness: 300, damping: 15 }}
+   314→              className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-quiz-purple to-quiz-violet mb-4"
+   315→            >
+   316→              <Sparkles className="w-8 h-8 text-white" />
+   317→            </motion.div>
+   318→            <h1 className="text-3xl font-bold bg-gradient-to-r from-quiz-purple to-quiz-violet bg-clip-text text-transparent">
+   319→              {t('solo.title')}
+   320→            </h1>
+   321→            <p className="text-muted-foreground mt-1">{t('solo.subtitle')}</p>
+   322→          </div>
+   323→
+   324→          {/* Quick Play */}
+   325→          <Card className="mb-6 border-quiz-purple/20">
+   326→            <CardContent className="p-4">
+   327→              <Button
+   328→                onClick={handleQuickPlay}
+   329→                disabled={state.isLoading}
+   330→                className="w-full h-14 text-lg bg-gradient-to-r from-quiz-purple to-quiz-violet text-white font-bold"
+   331→              >
+   332→                {state.isLoading ? (
+   333→                  <span className="flex items-center gap-2">
+   334→                    <Zap className="w-5 h-5 animate-pulse" />
+   335→                    {t('common.loading')}
+   336→                  </span>
+   337→                ) : (
+   338→                  <span className="flex items-center gap-2">
+   339→                    <Play className="w-5 h-5" />
+   340→                    {t('solo.quickPlay')}
+   341→                  </span>
+   342→                )}
+   343→              </Button>
+   344→            </CardContent>
+   345→          </Card>
+   346→
+   347→          {/* Custom Setup */}
+   348→          <Card>
+   349→            <CardHeader className="pb-4">
+   350→              <CardTitle className="flex items-center gap-2 text-lg">
+   351→                <Settings className="w-5 h-5 text-quiz-purple" />
+   352→                {t('solo.setupTitle')}
+   353→              </CardTitle>
+   354→            </CardHeader>
+   355→            <CardContent className="space-y-4">
+   356→              {/* Player Name */}
+   357→              <div className="space-y-2">
+   358→                <Label>{t('gameSetup.playerName')}</Label>
+   359→                <Input
+   360→                  value={setupPlayerName}
+   361→                  onChange={(e) => setSetupPlayerName(e.target.value)}
+   362→                  placeholder={t('gameSetup.playerName')}
+   363→                  maxLength={20}
+   364→                />
+   365→              </div>
+   366→
+   367→              {/* Category */}
+   368→              <div className="space-y-2">
+   369→                <Label>{t('gameSetup.category')}</Label>
+   370→                <Select value={setupCategory} onValueChange={setSetupCategory}>
+   371→                  <SelectTrigger>
+   372→                    <SelectValue />
+   373→                  </SelectTrigger>
+   374→                  <SelectContent>
+   375→                    <SelectItem value="general">{t('category.general')}</SelectItem>
+   376→                    <SelectItem value="science">{t('category.science')}</SelectItem>
+   377→                    <SelectItem value="history">{t('category.history')}</SelectItem>
+   378→                    <SelectItem value="geography">{t('category.geography')}</SelectItem>
+   379→                    <SelectItem value="sports">{t('category.sports')}</SelectItem>
+   380→                    <SelectItem value="entertainment">{t('category.entertainment')}</SelectItem>
+   381→                    <SelectItem value="technology">{t('category.technology')}</SelectItem>
+   382→                    <SelectItem value="literature">{t('category.literature')}</SelectItem>
+   383→                    <SelectItem value="art">{t('category.art')}</SelectItem>
+   384→                    <SelectItem value="music">{t('category.music')}</SelectItem>
+   385→                  </SelectContent>
+   386→                </Select>
+   387→              </div>
+   388→
+   389→              {/* Difficulty */}
+   390→              <div className="space-y-2">
+   391→                <Label>{t('gameSetup.difficulty')}</Label>
+   392→                <Select value={setupDifficulty} onValueChange={setSetupDifficulty}>
+   393→                  <SelectTrigger>
+   394→                    <SelectValue />
+   395→                  </SelectTrigger>
+   396→                  <SelectContent>
+   397→                    <SelectItem value="EASY">{t('difficulty.EASY')}</SelectItem>
+   398→                    <SelectItem value="MEDIUM">{t('difficulty.MEDIUM')}</SelectItem>
+   399→                    <SelectItem value="HARD">{t('difficulty.HARD')}</SelectItem>
+   400→                    <SelectItem value="MIXED">{t('difficulty.MIXED')}</SelectItem>
+   401→                  </SelectContent>
+   402→                </Select>
+   403→              </div>
+   404→
+   405→              {/* Question Count */}
+   406→              <div className="space-y-2">
+   407→                <Label>{t('gameSetup.questionCount')}</Label>
+   408→                <Select value={setupQuestionCount} onValueChange={setSetupQuestionCount}>
+   409→                  <SelectTrigger>
+   410→                    <SelectValue />
+   411→                  </SelectTrigger>
+   412→                  <SelectContent>
+   413→                    <SelectItem value="5">5</SelectItem>
+   414→                    <SelectItem value="10">10</SelectItem>
+   415→                    <SelectItem value="15">15</SelectItem>
+   416→                    <SelectItem value="20">20</SelectItem>
+   417→                  </SelectContent>
+   418→                </Select>
+   419→              </div>
+   420→
+   421→              {/* Time Per Question */}
+   422→              <div className="space-y-2">
+   423→                <Label>{t('gameSetup.timePerQuestion')}</Label>
+   424→                <Select value={setupTimePerQuestion} onValueChange={setSetupTimePerQuestion}>
+   425→                  <SelectTrigger>
+   426→                    <SelectValue />
+   427→                  </SelectTrigger>
+   428→                  <SelectContent>
+   429→                    <SelectItem value="10">10s</SelectItem>
+   430→                    <SelectItem value="15">15s</SelectItem>
+   431→                    <SelectItem value="20">20s</SelectItem>
+   432→                    <SelectItem value="30">30s</SelectItem>
+   433→                    <SelectItem value="45">45s</SelectItem>
+   434→                  </SelectContent>
+   435→                </Select>
+   436→              </div>
+   437→
+   438→              {/* Start Button */}
+   439→              <Button
+   440→                onClick={startGame}
+   441→                disabled={state.isLoading}
+   442→                className="w-full bg-gradient-to-r from-quiz-purple to-quiz-violet text-white font-bold mt-2"
+   443→              >
+   444→                {state.isLoading ? (
+   445→                  <span className="flex items-center gap-2">
+   446→                    <Zap className="w-4 h-4 animate-pulse" />
+   447→                    {t('common.loading')}
+   448→                  </span>
+   449→                ) : (
+   450→                  <span className="flex items-center gap-2">
+   451→                    <Play className="w-4 h-4" />
+   452→                    {t('solo.start')}
+   453→                  </span>
+   454→                )}
+   455→              </Button>
+   456→            </CardContent>
+   457→          </Card>
+   458→
+   459→          {/* Back Button */}
+   460→          <div className="mt-6 text-center">
+   461→            <Button
+   462→              variant="ghost"
+   463→              onClick={() => setCurrentView('landing')}
+   464→              className="text-muted-foreground"
+   465→            >
+   466→              <ArrowLeft className="w-4 h-4 mr-2" />
+   467→              {t('solo.backToHome')}
+   468→            </Button>
+   469→          </div>
+   470→        </motion.div>
+   471→      </div>
+   472→    )
+   473→  }
+   474→
+   475→  // ============ RENDER: PLAYING ============
+   476→  if (state.status === 'playing') {
+   477→    const currentQuestion = state.questions[state.currentIndex]
+   478→    if (!currentQuestion) return null
+   479→
+   480→    const timePercentage = timePerQuestion > 0 ? (state.timeRemaining / timePerQuestion) * 100 : 0
+   481→    const isTimerDanger = timePercentage <= 20
+   482→    const isTimerWarning = timePercentage <= 50 && !isTimerDanger
+   483→
+   484→    return (
+   485→      <div className="min-h-[calc(100vh-3.5rem)] flex flex-col px-4 py-4 max-w-2xl mx-auto w-full">
+   486→        {/* Top Bar */}
+   487→        <div className="flex items-center justify-between mb-3">
+   488→          <Badge variant="secondary" className="bg-quiz-purple/10 text-quiz-purple border-quiz-purple/20">
+   489→            {t('quiz.question', { current: String(state.currentIndex + 1), total: String(state.questions.length) })}
+   490→          </Badge>
+   491→          <div className="flex items-center gap-3">
+   492→            <Badge variant="secondary" className="bg-quiz-amber/10 text-quiz-amber border-quiz-amber/20">
+   493→              <Trophy className="w-3 h-3 mr-1" /> {state.score}
+   494→            </Badge>
+   495→            {state.streak >= 2 && (
+   496→              <motion.div
+   497→                animate={{ scale: [1, 1.2, 1] }}
+   498→                transition={{ duration: 0.3 }}
+   499→              >
+   500→                <Badge className="bg-quiz-rose/20 text-quiz-rose border-quiz-rose/30">
+   501→                  <Flame className="w-3 h-3 mr-1" /> {state.streak}x
+   502→                </Badge>
+   503→              </motion.div>
+   504→            )}
+   505→          </div>
+   506→        </div>
+   507→
+   508→        {/* Timer Bar */}
+   509→        <div className="mb-4">
+   510→          <div className="flex items-center justify-between mb-1">
+   511→            <div className="flex items-center gap-1.5 text-sm">
+   512→              <Clock className={`w-4 h-4 ${isTimerDanger ? 'text-quiz-rose animate-countdown-pulse' : isTimerWarning ? 'text-quiz-amber' : 'text-quiz-emerald'}`} />
+   513→              <span className={isTimerDanger ? 'text-quiz-rose font-bold' : isTimerWarning ? 'text-quiz-amber' : 'text-quiz-emerald'}>
+   514→                {state.timeRemaining}s
+   515→              </span>
+   516→            </div>
+   517→          </div>
+   518→          <div className="h-2 rounded-full bg-muted/50 overflow-hidden">
+   519→            <motion.div
+   520→              className={`h-full rounded-full ${isTimerDanger ? 'timer-bar-danger' : isTimerWarning ? 'timer-bar-warning' : 'timer-bar-safe'}`}
+   521→              initial={{ width: '100%' }}
+   522→              animate={{ width: `${timePercentage}%` }}
+   523→              transition={{ duration: 0.5, ease: 'linear' }}
+   524→            />
+   525→          </div>
+   526→        </div>
+   527→
+   528→        {/* Question Card */}
+   529→        <motion.div
+   530→          key={state.currentIndex}
+   531→          initial={{ opacity: 0, x: 50 }}
+   532→          animate={{ opacity: 1, x: 0 }}
+   533→          exit={{ opacity: 0, x: -50 }}
+   534→          transition={{ duration: 0.3 }}
+   535→          className="mb-5"
+   536→        >
+   537→          <div className="p-5 rounded-2xl bg-card border border-border/50 shadow-lg">
+   538→            {currentQuestion.category && (
+   539→              <div className="mb-3">
+   540→                <Badge variant="outline" className="text-xs">
+   541→                  {currentQuestion.category} · {currentQuestion.difficulty}
+   542→                </Badge>
+   543→              </div>
+   544→            )}
+   545→            <h2 className="text-xl sm:text-2xl font-bold leading-relaxed">
+   546→              {currentQuestion.text}
+   547→            </h2>
+   548→          </div>
+   549→        </motion.div>
+   550→
+   551→        {/* Options */}
+   552→        <div className="flex-1 grid gap-3">
+   553→          <AnimatePresence mode="wait">
+   554→            {currentQuestion.options.map((option, index) => {
+   555→              const color = OPTION_COLORS[index]
+   556→              const letter = OPTION_LETTERS[index]
+   557→              const isSelected = state.selectedOption === index
+   558→              const isCorrect = state.showResult && currentQuestion.correctIndex === index
+   559→              const isWrong = state.showResult && isSelected && index !== currentQuestion.correctIndex
+   560→
+   561→              return (
+   562→                <motion.button
+   563→                  key={`${state.currentIndex}-${index}`}
+   564→                  initial={{ opacity: 0, y: 20 }}
+   565→                  animate={{ opacity: 1, y: 0 }}
+   566→                  transition={{ delay: index * 0.08, duration: 0.3 }}
+   567→                  onClick={() => handleSelectOption(index)}
+   568→                  disabled={state.hasSubmitted || state.showResult}
+   569→                  className={`
+   570→                    relative flex items-center gap-4 p-4 rounded-xl border-2 transition-all duration-200 text-left
+   571→                    ${isCorrect
+   572→                      ? `${color.lightBg} ${color.border} shadow-lg`
+   573→                      : isWrong
+   574→                        ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-500 shadow-lg animate-shake'
+   575→                        : isSelected
+   576→                          ? `bg-gradient-to-r ${color.bg} text-white border-transparent shadow-lg ${color.hover}`
+   577→                          : 'bg-card border-border/50 hover:border-quiz-purple/30 hover:shadow-md'
+   578→                    }
+   579→                    ${state.hasSubmitted && !isSelected && !isCorrect ? 'opacity-50' : ''}
+   580→                  `}
+   581→                >
+   582→                  <span className={`
+   583→                    flex items-center justify-center w-9 h-9 rounded-lg font-bold text-sm shrink-0
+   584→                    ${isCorrect
+   585→                      ? 'bg-white/20 text-white'
+   586→                      : isWrong
+   587→                        ? 'bg-rose-500/20 text-rose-700'
+   588→                        : isSelected
+   589→                          ? 'bg-white/20 text-white'
+   590→                          : 'bg-muted/50 text-muted-foreground'
+   591→                    }
+   592→                  `}>
+   593→                    {letter}
+   594→                  </span>
+   595→                  <span className={`flex-1 font-medium ${isCorrect || isSelected ? 'text-lg' : ''}`}>
+   596→                    {option}
+   597→                  </span>
+   598→                  {isCorrect && <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400 shrink-0" />}
+   599→                  {isWrong && <XCircle className="w-6 h-6 text-rose-600 dark:text-rose-400 shrink-0" />}
+   600→                </motion.button>
+   601→              )
+   602→            })}
+   603→          </AnimatePresence>
+   604→        </div>
+   605→
+   606→        {/* Result Feedback */}
+   607→        <AnimatePresence>
+   608→          {state.showResult && (
+   609→            <motion.div
+   610→              initial={{ opacity: 0, y: 20 }}
+   611→              animate={{ opacity: 1, y: 0 }}
+   612→              exit={{ opacity: 0 }}
+   613→              className="mt-4"
+   614→            >
+   615→              {state.selectedOption === currentQuestion.correctIndex ? (
+   616→                <div className="flex items-center gap-3 p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+   617→                  <motion.div
+   618→                    initial={{ scale: 0 }}
+   619→                    animate={{ scale: 1 }}
+   620→                    transition={{ type: 'spring', stiffness: 300, damping: 15 }}
+   621→                  >
+   622→                    <CheckCircle2 className="w-8 h-8 text-emerald-600" />
+   623→                  </motion.div>
+   624→                  <div className="flex-1">
+   625→                    <p className="font-bold text-emerald-700 dark:text-emerald-400">
+   626→                      {t('quiz.correct', { points: String(100 + Math.max(0, Math.floor((state.timeRemaining / timePerQuestion) * 50)) + state.streak * 5) })}
+   627→                    </p>
+   628→                    {state.streak >= 2 && (
+   629→                      <p className="text-sm text-quiz-rose font-semibold flex items-center gap-1">
+   630→                        <Flame className="w-3 h-3" /> {t('quiz.streak', { count: String(state.streak) })}
+   631→                      </p>
+   632→                    )}
+   633→                    {currentQuestion.explanation && (
+   634→                      <p className="text-xs text-muted-foreground mt-1">{currentQuestion.explanation}</p>
+   635→                    )}
+   636→                  </div>
+   637→                </div>
+   638→              ) : (
+   639→                <div className="flex items-center gap-3 p-4 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800">
+   640→                  <XCircle className="w-8 h-8 text-rose-600 shrink-0" />
+   641→                  <div className="flex-1">
+   642→                    <p className="font-bold text-rose-700 dark:text-rose-400">
+   643→                      {state.selectedOption === null
+   644→                        ? t('quiz.timeUp')
+   645→                        : t('quiz.incorrect', { answer: currentQuestion.options[currentQuestion.correctIndex] || '' })
+   646→                      }
+   647→                    </p>
+   648→                    {currentQuestion.explanation && (
+   649→                      <p className="text-xs text-muted-foreground mt-1">{currentQuestion.explanation}</p>
+   650→                    )}
+   651→                  </div>
+   652→                </div>
+   653→              )}
+   654→
+   655→              {/* Next Button */}
+   656→              <Button
+   657→                onClick={handleNextQuestion}
+   658→                className="w-full mt-3 bg-gradient-to-r from-quiz-purple to-quiz-violet text-white font-bold"
+   659→              >
+   660→                {state.currentIndex + 1 >= state.questions.length ? t('solo.yourResult') : t('solo.start')}
+   661→              </Button>
+   662→            </motion.div>
+   663→          )}
+   664→        </AnimatePresence>
+   665→      </div>
+   666→    )
+   667→  }
+   668→
+   669→  // ============ RENDER: RESULT ============
+   670→  const accuracy = state.totalAnswered > 0 ? Math.round((state.correctCount / state.totalAnswered) * 100) : 0
+   671→  const avgTimeMs = state.totalAnswered > 0 ? Math.round(state.totalTimeMs / state.totalAnswered) : 0
+   672→
+   673→  return (
+   674→    <div className="min-h-[calc(100vh-3.5rem)] flex flex-col items-center justify-center px-4 py-8">
+   675→      <motion.div
+   676→        initial={{ opacity: 0, scale: 0.9 }}
+   677→        animate={{ opacity: 1, scale: 1 }}
+   678→        transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+   679→        className="w-full max-w-md"
+   680→      >
+   681→        {/* Trophy */}
+   682→        <div className="text-center mb-8">
+   683→          <motion.div
+   684→            initial={{ scale: 0 }}
+   685→            animate={{ scale: 1 }}
+   686→            transition={{ type: 'spring', stiffness: 300, damping: 15, delay: 0.2 }}
+   687→            className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-quiz-amber to-yellow-500 mb-4"
+   688→          >
+   689→            <Trophy className="w-10 h-10 text-white" />
+   690→          </motion.div>
+   691→          <h2 className="text-3xl font-bold">{t('solo.yourResult')}</h2>
+   692→        </div>
+   693→
+   694→        {/* Score Card */}
+   695→        <Card className="mb-6 border-quiz-purple/20">
+   696→          <CardContent className="p-6">
+   697→            <div className="text-center mb-6">
+   698→              <p className="text-5xl font-bold bg-gradient-to-r from-quiz-purple to-quiz-violet bg-clip-text text-transparent">
+   699→                {state.score}
+   700→              </p>
+   701→              <p className="text-muted-foreground text-sm mt-1">points</p>
+   702→            </div>
+   703→
+   704→            <div className="grid grid-cols-2 gap-4">
+   705→              {/* Correct Answers */}
+   706→              <div className="text-center p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30">
+   707→                <CheckCircle2 className="w-6 h-6 text-emerald-600 mx-auto mb-1" />
+   708→                <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">
+   709→                  {state.correctCount}/{state.questions.length}
+   710→                </p>
+   711→                <p className="text-xs text-muted-foreground">{t('solo.correctAnswers')}</p>
+   712→              </div>
+   713→
+   714→              {/* Accuracy */}
+   715→              <div className="text-center p-3 rounded-xl bg-quiz-purple/10">
+   716→                <Zap className="w-6 h-6 text-quiz-purple mx-auto mb-1" />
+   717→                <p className="text-2xl font-bold text-quiz-purple">{accuracy}%</p>
+   718→                <p className="text-xs text-muted-foreground">{t('results.accuracy')}</p>
+   719→              </div>
+   720→
+   721→              {/* Average Time */}
+   722→              <div className="text-center p-3 rounded-xl bg-quiz-amber/10">
+   723→                <Clock className="w-6 h-6 text-quiz-amber mx-auto mb-1" />
+   724→                <p className="text-2xl font-bold text-quiz-amber">{(avgTimeMs / 1000).toFixed(1)}s</p>
+   725→                <p className="text-xs text-muted-foreground">{t('solo.averageTime')}</p>
+   726→              </div>
+   727→
+   728→              {/* Best Streak */}
+   729→              <div className="text-center p-3 rounded-xl bg-quiz-rose/10">
+   730→                <Flame className="w-6 h-6 text-quiz-rose mx-auto mb-1" />
+   731→                <p className="text-2xl font-bold text-quiz-rose">{state.bestStreak}x</p>
+   732→                <p className="text-xs text-muted-foreground">{t('solo.bestStreak')}</p>
+   733→              </div>
+   734→            </div>
+   735→
+   736→            {/* Perfect game badge */}
+   737→            {accuracy === 100 && (
+   738→              <motion.div
+   739→                initial={{ scale: 0 }}
+   740→                animate={{ scale: 1 }}
+   741→                transition={{ type: 'spring', delay: 0.5 }}
+   742→                className="mt-4 text-center"
+   743→              >
+   744→                <Badge className="bg-gradient-to-r from-quiz-amber to-yellow-500 text-white text-lg px-4 py-1">
+   745→                  🏆 {t('results.perfectGame')}
+   746→                </Badge>
+   747→              </motion.div>
+   748→            )}
+   749→          </CardContent>
+   750→        </Card>
+   751→
+   752→        {/* Action Buttons */}
+   753→        <div className="space-y-3">
+   754→          <Button
+   755→            onClick={handlePlayAgain}
+   756→            className="w-full h-12 bg-gradient-to-r from-quiz-purple to-quiz-violet text-white font-bold"
+   757→          >
+   758→            <RotateCcw className="w-4 h-4 mr-2" />
+   759→            {t('solo.playAgain')}
+   760→          </Button>
+   761→          <Button
+   762→            variant="outline"
+   763→            onClick={() => setCurrentView('landing')}
+   764→            className="w-full h-12"
+   765→          >
+   766→            <Home className="w-4 h-4 mr-2" />
+   767→            {t('solo.backToHome')}
+   768→          </Button>
+   769→        </div>
+   770→      </motion.div>
+   771→    </div>
+   772→  )
+   773→}
+   774→

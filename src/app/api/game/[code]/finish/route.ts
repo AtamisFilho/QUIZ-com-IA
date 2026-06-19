@@ -32,7 +32,7 @@ export async function POST(
       for (const p of players) {
         const existingPlayer = game.players.find(ep => ep.id === p.id)
         if (existingPlayer) {
-          await db.player.update({
+          await db.gamePlayer.update({
             where: { id: p.id },
             data: { score: p.score, streak: p.streak },
           })

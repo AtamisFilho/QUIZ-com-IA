@@ -7,10 +7,151 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============================================================
+// AUTHENTICATION (NextAuth.js)
+// ============================================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Auth
+  accounts Account[]
+  sessions Session[]
+
+  // Profile
+  profile UserProfile?
+
+  // Game relations
+  hostedGames  Game[]     @relation("HostedGames")
+  gamePlayers  GamePlayer[]
+  achievements UserAchievement[]
+  dailyResults DailyChallengeResult[]
+  subscriptions Subscription[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================================
+// USER PROFILE & PROGRESSION
+// ============================================================
+
+model UserProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  displayName    String
+  avatarEmoji    String   @default("🎮")
+  avatarColor    String   @default("purple")
+  level          Int      @default(1)
+  xp             Int      @default(0)
+  totalGames     Int      @default(0)
+  totalWins      Int      @default(0)
+  totalCorrect   Int      @default(0)
+  totalAnswered  Int      @default(0)
+  bestStreak     Int      @default(0)
+  dailyStreak    Int      @default(0)
+  lastDailyAt    DateTime?
+  preferredLang  String   @default("pt-BR")
+  subscriptionTier String @default("free") // free, pro, corporate
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Achievement {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String
+  icon        String
+  category    String   @default("general") // general, speed, accuracy, social, streak
+  xpReward    Int      @default(100)
+  createdAt   DateTime @default(now())
+
+  users UserAchievement[]
+}
+
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+}
+
+// ============================================================
+// SUBSCRIPTIONS
+// ============================================================
+
+model Subscription {
+  id              String   @id @default(cuid())
+  userId          String
+  tier            String   @default("free") // free, pro, corporate
+  status          String   @default("active") // active, canceled, past_due
+  stripeCustomerId String?
+  stripePriceId   String?
+  stripeSubId     String?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// GAME (Multiplayer)
+// ============================================================
+
 model Game {
   id                   String   @id @default(cuid())
   code                 String   @unique
   status               String   @default("WAITING")
+  type                 String   @default("multiplayer") // multiplayer, solo, daily
   category             String
   difficulty           String   @default("MIXED")
   language             String   @default("pt-BR")
@@ -21,12 +162,15 @@ model Game {
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  players   Player[]    @relation("GamePlayers")
-  questions Question[]  @relation("GameQuestions")
+  hostId   String?
+  host     User?    @relation("HostedGames", fields: [hostId], references: [id], onDelete: SetNull)
+
+  players   GamePlayer[]
+  questions Question[]
   stats     GameStats?
 }
 
-model Player {
+model GamePlayer {
   id          String   @id @default(cuid())
   name        String
   avatar      String   @default("🎮")
@@ -39,7 +183,10 @@ model Player {
   updatedAt   DateTime @updatedAt
 
   gameId String
-  game   Game   @relation("GamePlayers", fields: [gameId], references: [id], onDelete: Cascade)
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   answers Answer[]
 }
@@ -58,7 +205,7 @@ model Question {
   createdAt     DateTime @default(now())
 
   gameId String
-  game   Game   @relation("GameQuestions", fields: [gameId], references: [id], onDelete: Cascade)
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
 
   answers Answer[]
 }
@@ -71,10 +218,10 @@ model Answer {
   createdAt      DateTime @default(now())
 
   playerId   String
-  player     Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  player     GamePlayer @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   questionId String
-  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  question   Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
 }
 
 model GameStats {
@@ -86,4 +233,59 @@ model GameStats {
 
   gameId String @unique
   game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================
+// DAILY CHALLENGE
+// ============================================================
+
+model DailyChallenge {
+  id         String   @id @default(cuid())
+  date       String   @unique // YYYY-MM-DD
+  category   String
+  difficulty String
+  language   String   @default("pt-BR")
+  seed       Int // deterministic seed for question selection
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  results DailyChallengeResult[]
+}
+
+model DailyChallengeResult {
+  id          String   @id @default(cuid())
+  userId      String
+  challengeId String
+  score       Int
+  correctCount Int
+  totalCount  Int
+  timeTakenMs Int
+  completedAt DateTime @default(now())
+
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge DailyChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, challengeId])
+}
+
+// ============================================================
+// QUESTION CACHE (reduce AI costs)
+// ============================================================
+
+model QuestionCache {
+  id            String   @id @default(cuid())
+  text          String
+  optionA       String
+  optionB       String
+  optionC       String
+  optionD       String
+  correctAnswer String
+  explanation   String?
+  category      String
+  difficulty    String
+  language      String
+  source        String   @default("ai") // ai, manual, marketplace
+  timesUsed     Int      @default(0)
+  qualityScore  Float    @default(1.0)
+  createdAt     DateTime @default(now())
 }

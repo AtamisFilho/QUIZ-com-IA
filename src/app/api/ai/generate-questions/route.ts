@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { CATEGORY_LABELS, VALID_CATEGORIES, VALID_DIFFICULTIES } from '@/lib/game-utils'
+import { rateLimit } from '@/lib/rate-limit'
+import { getQuestionsFromCache, saveQuestionsToCache } from '@/lib/question-cache'
 
 interface GeneratedQuestion {
   text: string
@@ -119,6 +121,16 @@ function parseAIResponse(content: string, category: string, difficulty: string):
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting
+    const clientKey = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown'
+    const rateResult = rateLimit(clientKey, 20, 60000)
+    if (!rateResult.success) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please try again later.', resetAt: rateResult.resetAt },
+        { status: 429, headers: { 'X-RateLimit-Remaining': String(rateResult.remaining), 'X-RateLimit-Reset': String(rateResult.resetAt) } }
+      )
+    }
+
     const body = await request.json()
     const { category, difficulty, language, count, timePerQuestion, gameId } = body
 
@@ -141,19 +153,45 @@ export async function POST(request: NextRequest) {
 
     let questions: GeneratedQuestion[] = []
     let usedAI = false
+    let usedCache = false
 
-    for (let attempt = 0; attempt <= 2; attempt++) {
-      try {
-        console.log(`[AI Generate] Attempt ${attempt + 1} for ${category}/${difficulty}/${language}`)
-        questions = await generateQuestionsWithAI(category, difficulty, language, parsedCount)
-        usedAI = true
-        break
-      } catch (aiError) {
-        console.error(`[AI Generate] Attempt ${attempt + 1} failed:`, aiError)
+    // First, try to get questions from cache
+    try {
+      const cachedQuestions = await getQuestionsFromCache(category, difficulty === 'MIXED' ? 'MEDIUM' : difficulty, language, parsedCount)
+      if (cachedQuestions) {
+        questions = cachedQuestions as GeneratedQuestion[]
+        usedCache = true
+        console.log(`[AI Generate] Cache hit for ${category}/${difficulty}/${language}: ${questions.length} questions`)
+      }
+    } catch (cacheError) {
+      console.error('[AI Generate] Cache lookup failed:', cacheError)
+    }
+
+    // If cache miss, try AI generation
+    if (!usedCache) {
+      for (let attempt = 0; attempt <= 2; attempt++) {
+        try {
+          console.log(`[AI Generate] Attempt ${attempt + 1} for ${category}/${difficulty}/${language}`)
+          questions = await generateQuestionsWithAI(category, difficulty, language, parsedCount)
+          usedAI = true
+          break
+        } catch (aiError) {
+          console.error(`[AI Generate] Attempt ${attempt + 1} failed:`, aiError)
+        }
+      }
+
+      // Save generated questions to cache
+      if (usedAI && questions.length > 0) {
+        try {
+          await saveQuestionsToCache(questions, language)
+          console.log(`[AI Generate] Saved ${questions.length} questions to cache`)
+        } catch (saveError) {
+          console.error('[AI Generate] Failed to save to cache:', saveError)
+        }
       }
     }
 
-    if (!usedAI || questions.length === 0) {
+    if ((!usedAI && !usedCache) || questions.length === 0) {
       questions = FALLBACK_QUESTIONS.slice(0, parsedCount)
       questions = questions.map((q) => ({
         ...q,
@@ -182,7 +220,11 @@ export async function POST(request: NextRequest) {
       await db.question.createMany({ data: questionRecords })
     }
 
-    return NextResponse.json({ questions, generatedBy: usedAI ? 'ai' : 'fallback', count: questions.length })
+    return NextResponse.json({
+      questions,
+      generatedBy: usedCache ? 'cache' : usedAI ? 'ai' : 'fallback',
+      count: questions.length,
+    })
   } catch (error) {
     console.error('[AI Generate] Fatal error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

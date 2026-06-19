@@ -13,6 +13,12 @@ import LobbyScreen from '@/components/quiz/LobbyScreen'
 import QuizPlayScreen from '@/components/quiz/QuizPlayScreen'
 import ResultsScreen from '@/components/quiz/ResultsScreen'
 import AdminPanel from '@/components/quiz/AdminPanel'
+import SoloModeScreen from '@/components/quiz/SoloModeScreen'
+import ProfileScreen from '@/components/quiz/ProfileScreen'
+import SubscriptionScreen from '@/components/quiz/SubscriptionScreen'
+import LeaderboardScreen from '@/components/quiz/LeaderboardScreen'
+import DailyChallengeScreen from '@/components/quiz/DailyChallengeScreen'
+import InstallPrompt from '@/components/quiz/InstallPrompt'
 
 function GameApp() {
   const {
@@ -43,11 +49,13 @@ function GameApp() {
   const connectSocket = useCallback(() => {
     if (socketRef.current?.connected) return socketRef.current
 
-    const socket = io('/?XTransformPort=3003', {
+    const socket = io({
+      path: '/socket.io/',
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
+      query: { XTransformPort: '3003' },
     })
 
     socket.on('connect', () => {
@@ -218,6 +226,11 @@ function GameApp() {
       case 'playing': return <QuizPlayScreen />
       case 'results': return <ResultsScreen />
       case 'admin': return <AdminPanel />
+      case 'solo': return <SoloModeScreen />
+      case 'profile': return <ProfileScreen />
+      case 'subscription': return <SubscriptionScreen />
+      case 'leaderboard': return <LeaderboardScreen />
+      case 'daily': return <DailyChallengeScreen />
       default: return <LandingScreen />
     }
   }
@@ -228,6 +241,7 @@ function GameApp() {
       <main className="flex-1">
         {renderView()}
       </main>
+      <InstallPrompt />
     </div>
   )
 }

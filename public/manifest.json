@@ -1,0 +1,21 @@
+{
+  "name": "QUIZ AI - Quiz Orquestrado por IA",
+  "short_name": "QUIZ AI",
+  "description": "Jogo de quiz online multiplayer com perguntas geradas por IA",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#7c3aed",
+  "theme_color": "#7c3aed",
+  "orientation": "portrait-primary",
+  "categories": ["games", "education", "entertainment"],
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [],
+  "prefer_related_applications": false
+}

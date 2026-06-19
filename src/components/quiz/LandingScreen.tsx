@@ -3,7 +3,7 @@
 import { useTranslation } from '@/lib/i18n'
 import { useGameStore } from '@/lib/game-store'
 import { motion } from 'framer-motion'
-import { Brain, Users, Share2, Sparkles, Trophy, ArrowRight, Zap, Globe } from 'lucide-react'
+import { Brain, Users, Share2, Sparkles, Trophy, ArrowRight, Zap, Globe, Calendar, Flame } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 const stepIcons = [Users, Share2, Sparkles, Trophy]
@@ -11,6 +11,19 @@ const stepIcons = [Users, Share2, Sparkles, Trophy]
 export default function LandingScreen() {
   const { t } = useTranslation()
   const { setCurrentView } = useGameStore()
+
+  // Category icons for the daily challenge preview
+  const categoryIcons: Record<string, string> = {
+    general: '🌍', science: '🔬', history: '📜', geography: '🗺️',
+    sports: '⚽', entertainment: '🎬', technology: '💻', literature: '📚',
+    art: '🎨', music: '🎵',
+  }
+
+  // Determine today's category based on day of year (same logic as API)
+  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / (1000 * 60 * 60 * 24))
+  const categories = ['general', 'science', 'history', 'geography', 'sports', 'entertainment', 'technology', 'literature', 'art', 'music']
+  const todayCategory = categories[dayOfYear % categories.length]
+  const todayCategoryIcon = categoryIcons[todayCategory] || '🎯'
 
   const steps = [
     { key: 'landing.features.step1', icon: Users },
@@ -128,6 +141,60 @@ export default function LandingScreen() {
               <ArrowRight className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" />
             </Button>
           </motion.div>
+        </motion.div>
+      </section>
+
+      {/* Daily Challenge Card */}
+      <section className="py-8 px-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.6 }}
+          className="max-w-xl mx-auto"
+        >
+          <button
+            onClick={() => setCurrentView('daily')}
+            className="w-full group relative overflow-hidden rounded-2xl border-2 border-amber-400/40 dark:border-amber-500/30 bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 dark:from-amber-950/30 dark:via-orange-950/20 dark:to-amber-950/30 p-6 text-left shadow-lg hover:shadow-xl hover:shadow-amber-500/10 hover:-translate-y-1 transition-all duration-300"
+          >
+            {/* Decorative gradient strip */}
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-400 via-orange-500 to-rose-500" />
+            
+            {/* Sparkle effects */}
+            <div className="absolute top-4 right-4 opacity-20">
+              <Sparkles className="w-8 h-8 text-amber-500" />
+            </div>
+
+            <div className="flex items-center gap-4">
+              {/* Calendar Icon */}
+              <motion.div
+                animate={{ scale: [1, 1.05, 1] }}
+                transition={{ repeat: Infinity, duration: 2 }}
+                className="flex items-center justify-center w-14 h-14 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 shadow-md shadow-amber-500/30 shrink-0"
+              >
+                <Calendar className="w-7 h-7 text-white" />
+              </motion.div>
+
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg font-bold text-amber-700 dark:text-amber-400 mb-1">
+                  {t('daily.title')}
+                </h3>
+                <p className="text-sm text-amber-600/80 dark:text-amber-300/70 mb-2">
+                  {t('daily.subtitle')}
+                </p>
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-200/60 dark:bg-amber-800/40 text-amber-700 dark:text-amber-300 font-medium">
+                    {todayCategoryIcon} {t('daily.questions')}
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-200/60 dark:bg-orange-800/40 text-orange-700 dark:text-orange-300 font-medium">
+                    <Flame className="w-3 h-3" /> {t('daily.streak')}
+                  </span>
+                </div>
+              </div>
+
+              <ArrowRight className="w-5 h-5 text-amber-500 group-hover:translate-x-1 transition-transform shrink-0" />
+            </div>
+          </button>
         </motion.div>
       </section>
 
